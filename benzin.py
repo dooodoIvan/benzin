@@ -1225,8 +1225,14 @@ def say(token, chat_id, text, markup=None):
     return tg_call(token, "sendMessage", **params)
 
 
+BTN_STATIONS, BTN_FUELS = "📍 Заправки", "🛢 Марки"
+KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}]], "resize_keyboard": True, "is_persistent": True}
+KEYBOARD_VERSION = 1  # увеличить, если поменяются кнопки — тогда бот пришлёт их всем заново
+KEYBOARD_TEXT = ("Внизу — кнопки:\n📍 Заправки — выбрать заправки\n🛢 Марки — выбрать марки топлива\n"
+                 "⛽ Сводка (слева) — сводка и статистика по вашим заправкам.")
+
 HELP_SUB = ("Бот присылает оповещение, когда на ваших заправках появляется нужное вам топливо.\n"
-            "/stations — выбрать заправки (до 8)\n/fuels — выбрать марки топлива\n"
+            "📍 Заправки — выбрать заправки (до 8)\n🛢 Марки — выбрать марки топлива\n"
             "Сводка со статистикой — кнопка «⛽ Сводка» внизу.\n/stop — отписаться.")
 
 
@@ -1325,7 +1331,7 @@ def handle_stations_cb(token, cb, subs):
     tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"], **({"text": notice, "show_alert": "true"} if notice else {}))
     if parts[1] == "done":
         text = ("✅ Сохранено. Ваши заправки:\n" + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids)
-                + "\n\nОповещения будут приходить по ним, сводка — кнопка «⛽ Сводка» внизу. Изменить — /stations.")
+                + "\n\nОповещения будут приходить по ним, сводка — кнопка «⛽ Сводка». Изменить — кнопка «📍 Заправки».")
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), text=text, parse_mode="HTML",
                 reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid)))
         return changed
@@ -1369,7 +1375,7 @@ def handle_fuels_cb(token, cb, subs):
     tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"], **({"text": notice, "show_alert": "true"} if notice else {}))
     if data == "fu:done":
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
-                text=f"✅ Сохранено. Марки: {fuels_title(fuels)}.\nОповещения и сводка — по ним. Изменить — /fuels.",
+                text=f"✅ Сохранено. Марки: {fuels_title(fuels)}.\nОповещения и сводка — по ним. Изменить — кнопка «🛢 Марки».",
                 reply_markup=page_button(datetime.now(MSK), selection(subs, cid), fuels))
         return changed
     text, rows = fuels_view(fuels)
@@ -1386,6 +1392,7 @@ def handle_message(token, msg, subs):
         return False
     cid, text = str(chat["id"]), (msg.get("text") or "").strip()
     owner = owner_id()
+    text = {BTN_STATIONS: "/stations", BTN_FUELS: "/fuels"}.get(text, text)
     if text.startswith("/stations") and (cid == owner or cid in subs["subscribers"]):
         view_text, rows = stations_view(selection(subs, cid), "home")
         say(token, cid, view_text, {"inline_keyboard": rows})
@@ -1404,7 +1411,7 @@ def handle_message(token, msg, subs):
                     {"inline_keyboard": [[{"text": "❌ Удалить", "callback_data": f"sub:del:{sid}"}]]})
         else:
             say(token, cid, "Вы владелец бота: оповещения приходят вам и подтверждённым подписчикам — каждому по его заправкам и маркам.\n"
-                            "/stations — выбрать свои заправки\n/fuels — выбрать марки топлива\n/list — список подписчиков.")
+                            "/list — список подписчиков.\n\n" + KEYBOARD_TEXT, KEYBOARD)
         return False
     if text.startswith("/stop"):
         if cid in subs["subscribers"]:
@@ -1415,7 +1422,7 @@ def handle_message(token, msg, subs):
         say(token, cid, "Вы и так не подписаны. /start — попросить доступ.")
         return False
     if cid in subs["subscribers"]:
-        say(token, cid, ("Вы уже получаете оповещения.\n\n" if text.startswith("/start") else "") + HELP_SUB)
+        say(token, cid, ("Вы уже получаете оповещения.\n\n" if text.startswith("/start") else "") + HELP_SUB, KEYBOARD)
         return False
     if cid in subs["pending"]:
         say(token, cid, "Запрос уже отправлен владельцу бота — ждём подтверждения.")
@@ -1456,8 +1463,10 @@ def handle_callback(token, cb, subs):
         set_menu_button(token, cid, sids)
         say(token, cid, "✅ Владелец подтвердил доступ. Сейчас выбраны заправки по умолчанию:\n"
                         + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids)
-                        + f"\nМарки: {fuels_title(DEFAULT_FUELS)}.\n\nЧтобы выбрать свои заправки — /stations, марки — /fuels.\n\n" + HELP_SUB,
+                        + f"\nМарки: {fuels_title(DEFAULT_FUELS)}.\n\nСвои заправки и марки выбираются кнопками внизу.",
             json.loads(page_button(datetime.now(MSK), sids)))
+        say(token, cid, KEYBOARD_TEXT, KEYBOARD)
+        subs["subscribers"][cid]["kb"] = KEYBOARD_VERSION
         done(f"✅ Добавлено в подписчики: {html.escape(info['name'])}.")
         return True
     if action == "no" and cid in subs["pending"]:
@@ -1497,6 +1506,17 @@ def setup_bot(db):
             set_menu_button(token, cid, sids, fuels)
         except Exception as e:
             print(f"кнопка меню …{cid[-4:]}: {e}", file=sys.stderr)
+    subs, changed = load_subs(), False
+    people = [(owner, subs["owner"])] + [(cid, e) for cid, e in subs["subscribers"].items() if cid != owner]
+    for cid, entry in people:
+        if entry.get("kb") != KEYBOARD_VERSION:  # кнопки под полем ввода — один раз каждому
+            try:
+                say(token, cid, KEYBOARD_TEXT, KEYBOARD)
+                entry["kb"], changed = KEYBOARD_VERSION, True
+            except Exception as e:
+                print(f"кнопки …{cid[-4:]}: {e}", file=sys.stderr)
+    if changed:
+        save_subs(subs)
 
 
 def poll_bot(wait=0):
