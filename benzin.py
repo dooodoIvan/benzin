@@ -1096,6 +1096,35 @@ PUMP_ICON = ('<span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" widt
              '<path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><path d="M3 21h12"/><path d="M7 8h4"/>'
              '<path d="M14 10h2a2 2 0 0 1 2 2v4.5a1.5 1.5 0 0 0 3 0V8.5L18 5.5"/></svg></span>')
 
+# логотипы сетей (значок без надписи) — лежат в logos/, встраиваются в страницу; у остальных сетей — колонка
+LOGOS = {"роснефть": "rosneft.png", "лукойл": "lukoil.png", "газпромнефть": "gpn.png", "газпром": "gpn.png",
+         "татнефть": "tatneft.svg", "teboil": "teboil.svg"}
+
+
+def logo_key(brand):
+    b = (brand or "").lower().replace(" ", "")
+    return next((LOGOS[k].split(".")[0] for k in LOGOS if k in b), None)
+
+
+def logo_css():
+    """CSS-классы .logo-… с картинками логотипов (каждая встраивается в страницу один раз)."""
+    import base64
+    rules = []
+    for name in dict.fromkeys(LOGOS.values()):
+        f = BASE / "logos" / name
+        if f.exists():
+            mime = "image/svg+xml" if name.endswith(".svg") else "image/png"
+            rules.append(f".logo-{name.split('.')[0]} {{ background-image:url(data:{mime};base64,"
+                         f"{base64.b64encode(f.read_bytes()).decode()}); }}")
+    return "\n".join(rules)
+
+
+def brand_icon(brand):
+    key = logo_key(brand)
+    if key and (BASE / "logos" / next(v for v in LOGOS.values() if v.startswith(key + "."))).exists():
+        return f'<span class="ico logo logo-{key}" aria-hidden="true"></span>'
+    return PUMP_ICON
+
 
 def write_report(db, path=None, sids=None, combos=None):
     """sids — все заправки, которые должны быть на странице (по умолчанию — заправки владельца);
@@ -1154,7 +1183,7 @@ def write_report(db, path=None, sids=None, combos=None):
         title = REG[sid]["brand"] or "АЗС"
         at = f' data-at="{when.timestamp():.0f}"' if cls == "have" else ""
         cards.append(f'<section class="card st{"" if sid in shown else " nosel"}" data-sid="{sid}" '
-                     f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}"><div class="head">{PUMP_ICON}'
+                     f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}"><div class="head">{brand_icon(REG[sid]["brand"])}'
                      f'<div class="ttl"><h2>{esc(title)}</h2><span class="sub">{esc(short_address(REG[sid]["address"]))}</span></div>'
                      f'<span class="badge {cls}"{at}>{label}</span></div>{table}{price_html}{hist_html}</section>')
     blocks = "".join(
@@ -1221,6 +1250,9 @@ h2.section {{ font-size:20px; font-weight:600; margin:30px 0 4px; }}
 .card .nodata {{ display:none; }} .card.empty .nodata {{ display:block; }} .card.empty table {{ display:none; }}
 .head {{ display:flex; align-items:center; gap:12px; margin-bottom:12px; }}
 .ico {{ flex:none; width:46px; height:46px; border-radius:14px; background:var(--tile); color:var(--tile-ink); display:grid; place-items:center; }}
+.ico.logo {{ background-color:#fff; background-repeat:no-repeat; background-position:center; background-size:30px 30px;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.06); }}
+{logo_css()}
 .ttl {{ flex:1; min-width:0; }} .ttl h2 {{ font-size:16px; }}
 .ttl .sub {{ display:block; color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .badge {{ flex:none; font-size:12px; font-weight:700; padding:6px 12px; border-radius:999px; color:#fff; white-space:nowrap; }}
