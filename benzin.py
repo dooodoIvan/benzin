@@ -1194,7 +1194,7 @@ body {{ margin:0; background:var(--bg); color:var(--text);
   font:15px/1.5 "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing:antialiased; }}
 main {{ max-width:760px; margin:0 auto; padding:22px 16px 48px; }}
 h1 {{ font-size:26px; font-weight:500; letter-spacing:-.01em; margin:0; padding-bottom:16px; border-bottom:1px solid var(--line); color:var(--muted); }}
-h1 b {{ color:var(--text); font-weight:800; }}
+h1 b {{ color:var(--text); font-weight:800; }} h1 .ago {{ font-size:.7em; white-space:nowrap; }}
 h2 {{ font-size:17px; font-weight:700; margin:0; letter-spacing:-.01em; }}
 h4 {{ font-size:14px; font-weight:600; color:inherit; margin:20px 0 6px; }}
 .muted {{ color:var(--muted); }} .note {{ color:var(--text2); font-size:13px; margin:4px 0; }}
@@ -1275,10 +1275,9 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
   padding:8px 11px; font-size:13px; box-shadow:0 10px 30px -10px rgba(0,0,0,.35); display:none; max-width:280px; z-index:10; white-space:pre-line; }}
 @media (max-width:560px) {{ .card > table:not(.tbl) th:nth-child(5), .card > table:not(.tbl) td:nth-child(5) {{ display:none; }} }}
 </style></head><body data-updated="{now.isoformat()}"><main>
-<h1>Сводка, <b id="ftitle">{fuels_title(DEFAULT_FUELS)}</b></h1>
+<h1><b>{now:%H:%M}</b>, {now:%d.%m.%Y} <span class="ago" id="ago"></span></h1>
 <div class="topbar">
-  <div class="muted">Обновлено <b id="updated">{now:%d.%m.%Y в %H:%M}</b> <span id="ago"></span>.
-  Сбор с 7:00 до 24:00 каждые 10 минут, ночью не ведётся.</div>
+  <div class="muted">Сводка по <b id="ftitle">{fuels_title(DEFAULT_FUELS)}</b>. Сбор с 7:00 до 24:00 каждые 10 минут, ночью не ведётся.</div>
   <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg> Обновить сейчас</a>
   <div class="muted nosel" id="refresh-bot">Обновить данные — кнопка «🔄 Обновить» в боте.</div>
 </div>
@@ -1357,7 +1356,9 @@ if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData && params.get
 // «N мин назад» и автообновление, когда сервер опубликует более свежую сводку
 const updated = new Date(document.body.dataset.updated);
 function tickAgo() {{ const m = Math.round((Date.now() - updated) / 60000);
-  document.getElementById('ago').textContent = m < 1 ? '(только что)' : m < 120 ? `(${{m}} мин назад)` : ''; }}
+  const h = Math.floor(m / 60), d = Math.floor(h / 24);
+  document.getElementById('ago').textContent = '(' + (m < 1 ? 'только что' : m < 60 ? `${{m}} мин назад`
+    : h < 24 ? `${{h}} ч${{m % 60 ? ' ' + m % 60 + ' мин' : ''}} назад` : `${{d}} дн назад`) + ')'; }}
 tickAgo(); setInterval(tickAgo, 30000);
 async function checkFresh() {{
   if (location.protocol === 'file:') return;
