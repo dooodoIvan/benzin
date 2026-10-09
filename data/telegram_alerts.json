@@ -61,11 +61,11 @@
   "last_alert": "2026-10-09T16:30:12.219089+03:00"
  },
  "5c1960|92": {
-  "state": "have",
+  "state": "stale",
   "last_alert": "2026-10-09T16:07:21.763871+03:00"
  },
  "5c1960|95": {
-  "state": "have",
+  "state": "stale",
   "last_alert": "2026-10-09T16:07:21.763871+03:00"
  },
  "68d21d|92": {
@@ -75,7 +75,7 @@
   "state": "term"
  },
  "7cce85|95": {
-  "state": "term"
+  "state": "none"
  },
  "a9ae0c|92": {
   "state": "stale"
