@@ -97,5 +97,29 @@
  },
  "741212|95": {
   "state": "term"
+ },
+ "2c0db4|95": {
+  "state": "term"
+ },
+ "2c0db4|95+": {
+  "state": "have"
+ },
+ "443eed|95": {
+  "state": "term"
+ },
+ "443eed|95+": {
+  "state": "unknown"
+ },
+ "ae46f5|95": {
+  "state": "term"
+ },
+ "ae46f5|95+": {
+  "state": "none"
+ },
+ "da2b7e|95": {
+  "state": "term"
+ },
+ "da2b7e|95+": {
+  "state": "unknown"
  }
 }
