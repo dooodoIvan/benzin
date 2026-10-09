@@ -1,7 +1,7 @@
 {
  "_v": 3,
  "472e11|95": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-09T14:00:14.612942+03:00"
  },
  "472e11|98": {
@@ -57,7 +57,7 @@
   "state": "unknown"
  },
  "472e11|92": {
-  "state": "have"
+  "state": "term"
  },
  "5c1960|92": {
   "state": "term"
