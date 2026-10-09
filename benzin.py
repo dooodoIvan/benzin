@@ -85,7 +85,7 @@ def fuels_or(fuels):
 def is_petrol(fuels):
     return any(f != "ДТ" for f in fuels)
 FRESH = timedelta(hours=24)  # старше — считаем «нет свежих данных»
-CONFIRM_FRESH = timedelta(hours=2)  # «есть» старше 2 часов показываем жёлтым «?»
+CONFIRM_FRESH = timedelta(hours=3)  # «есть» старше 3 часов — «давно» (до этого цвет плавно уходит от зелёного к жёлтому)
 ALERT_COOLDOWN = timedelta(hours=1)  # защита от «мигания» есть/нет: по одной заправке не чаще раза в час
 KIND_RU = {"report": "водитель", "summary": "общая сводка", "signal": "терминалы оплаты, не подтверждено"}
 
@@ -95,22 +95,24 @@ def status_word(avail, kind, seen_at=None, now=None):
     if kind == "signal":
         return "❓ по терминалу" if avail else "нет (по терминалу)"
     if avail and seen_at and now and now - seen_at > CONFIRM_FRESH:
-        return "было «есть» (больше 2 ч назад)"
+        return "было «есть» (больше 3 ч назад)"
     return "есть" if avail else "нет"
 
 
-def status_html(avail, kind, seen_at, now):
-    """Статус для страницы: «есть» — зелёным; жёлтый «?» — «есть» подтверждали больше 2 ч назад;
-    красный «?» — только сигнал терминала оплаты; «нет» — красным."""
+def status_html(avail, kind, seen_at, now, history=False):
+    """Статус для страницы: «есть» — зелёным, со временем (до 3 ч) плавно желтеет; «давно» — жёлтым (больше 3 ч);
+    «терминал» — оранжевым (только сигнал терминала оплаты); «нет» — красным. history — строка из списка отчётов."""
     if kind == "signal":
         if avail:
-            return '<span class="st-qr" title="по терминалу оплаты, водители не подтверждали">?</span>'
+            return '<span class="st-term" title="по терминалу оплаты, водители не подтверждали">терминал</span>'
         return '<span class="st-no" title="по терминалу оплаты">нет</span>'
     if not avail:
         return '<span class="st-no">нет</span>'
+    if history:
+        return '<span class="st-yes">есть</span>'
     if now - seen_at > CONFIRM_FRESH:
-        return f'<span class="st-q" title="«есть» подтверждали в {seen_at:%H:%M}, больше 2 часов назад">?</span>'
-    return '<span class="st-yes">есть</span>'
+        return f'<span class="st-stale" title="«есть» подтверждали в {seen_at:%H:%M}, больше 3 часов назад">давно</span>'
+    return f'<span class="st-yes" data-at="{seen_at.timestamp():.0f}">есть</span>'
 
 
 OBS_FIELDS = ["seen_at", "address", "fuel", "available", "status", "kind", "queue", "post_id", "brand"]
@@ -492,20 +494,26 @@ def latest_state(db, sids):
 
 def station_state(fuels, now, wanted=None):
     """Состояние заправки по маркам wanted → (css-класс, подпись, ранг для сортировки, время последних данных).
-    Ранги: 0 есть (≤2 ч), 1 «есть» было давно, 2 только терминал, 3 нет, 4 нет данных."""
+    Ранги: 0 есть (≤3 ч), 1 «есть» было давно, 2 только терминал, 3 нет, 4 нет данных."""
     wanted = wanted or DEFAULT_FUELS
     fresh = {f: v for f, v in fuels.items() if f in wanted and now - v[0] <= FRESH}
     yes = [v[0] for v in fresh.values() if v[1] and v[4] != "signal"]
     term = [v[0] for v in fresh.values() if v[1] and v[4] == "signal"]
     if yes and now - max(yes) <= CONFIRM_FRESH:
-        return "have", "Есть", 0, max(yes)
+        return "have", f"Есть · {age_text(now - max(yes))}", 0, max(yes)
     if yes:
-        return "stale", f"? было {when_text(max(yes), now)}", 1, max(yes)
+        return "stale", f"Давно · {short_when(max(yes), now)}", 1, max(yes)
     if term:
-        return "term", "? терминал", 2, max(term)
+        return "term", "Терминал", 2, max(term)
     if fresh:
         return "none", "Нет", 3, max(v[0] for v in fresh.values())
     return "unknown", "Нет информации", 4, None
+
+
+def age_text(d):
+    """timedelta → «5 мин», «1 ч», «2 ч 20 мин»."""
+    m = max(0, int(d.total_seconds() // 60))
+    return f"{m} мин" if m < 60 else f"{m // 60} ч" + (f" {m % 60} мин" if m % 60 else "")
 
 
 def short_when(t, now):
@@ -1102,7 +1110,7 @@ def write_report(db, path=None, sids=None, combos=None):
     since = (now - FRESH).isoformat()
     cards = []
     prices = latest_prices(db, sids)
-    for sid, fuels, (cls, label, _, _) in ordered_stations(db, now, sids):
+    for sid, fuels, (cls, label, _, when) in ordered_stations(db, now, sids):
         rows, per_fuel = [], {}
         for fuel in FUEL_CHOICES:
             if fuel in fuels:
@@ -1140,14 +1148,15 @@ def write_report(db, path=None, sids=None, combos=None):
                 t = datetime.fromisoformat(seen_at)
                 hide = "" if fuel in DEFAULT_FUELS else ' class="nosel"'
                 hist.append(f'<li data-fuel="{esc(fuel)}"{hide}><b>{t:%H:%M}</b> '
-                            f'{fuel_name(fuel)} — {status_html(avail, kind, t, now)} <span class="muted">({KIND_RU[kind]})</span></li>')
+                            f'{fuel_name(fuel)} — {status_html(avail, kind, t, now, history=True)} <span class="muted">({KIND_RU[kind]})</span></li>')
         hist_html = (f'<details class="hist"><summary>Все отчёты за сутки (<span class="n">0</span>)</summary>'
                      f'<div class="dc"><ul>{"".join(hist[:60])}</ul></div></details>' if hist else "")
         title = REG[sid]["brand"] or "АЗС"
+        at = f' data-at="{when.timestamp():.0f}"' if cls == "have" else ""
         cards.append(f'<section class="card st{"" if sid in shown else " nosel"}" data-sid="{sid}" '
                      f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}"><div class="head">{PUMP_ICON}'
                      f'<div class="ttl"><h2>{esc(title)}</h2><span class="sub">{esc(short_address(REG[sid]["address"]))}</span></div>'
-                     f'<span class="badge {cls}">{label}</span></div>{table}{price_html}{hist_html}</section>')
+                     f'<span class="badge {cls}"{at}>{label}</span></div>{table}{price_html}{hist_html}</section>')
     blocks = "".join(
         f'<div class="fblock{"" if i == 0 else " nosel"}" data-fuels="{esc(",".join(c))}">{stats_section(db, now, sids, shown, list(c))}</div>'
         for i, c in enumerate(combos))
@@ -1173,19 +1182,19 @@ def write_report(db, path=None, sids=None, combos=None):
   --bg:#e4e3df; --card:#efeeea; --raise:#f6f5f2; --text:#121212; --text2:#4a4944; --muted:#8a8983; --line:#d4d3cd;
   --chip:#dcdbd5; --accent:#e5483d; --accent-text:#fff; --tile:#141414; --tile-ink:#fff;
   --panel:#141414; --panel-text:#f3f2ee; --panel-text2:#c2c1bb; --panel-muted:#8c8b86; --panel-line:#2a2a28; --panel-nodata:#33332f;
-  --track:#d8d7d1; --nodata:#cfcec8; --have:#1e9e48; --maybe:#b98a13; --none:#d6402f; --unknown:#8a8983; --off:#c3c2b7;
+  --track:#d8d7d1; --nodata:#cfcec8; --have:#1e9e48; --maybe:#b98a13; --term:#d2612b; --none:#d6402f; --unknown:#8a8983; --off:#c3c2b7;
   --shadow:0 1px 0 rgba(0,0,0,.04), 0 8px 24px -16px rgba(0,0,0,.25); {s_light} }}
 @media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ color-scheme: dark;
   --bg:#0e0e0d; --card:#1a1a19; --raise:#222220; --text:#f3f2ee; --text2:#c4c3bd; --muted:#8b8a85; --line:#2b2b29;
   --chip:#262624; --tile:#f1f0ec; --tile-ink:#141414;
   --panel:#1f1f1d; --panel-line:#30302d; --panel-nodata:#3a3a36;
-  --track:#2a2a28; --nodata:#3a3a36; --have:#2fbf5c; --maybe:#e0a72a; --none:#ef5a49; --off:#55544f;
+  --track:#2a2a28; --nodata:#3a3a36; --have:#2fbf5c; --maybe:#e0a72a; --term:#f08452; --none:#ef5a49; --off:#55544f;
   --shadow:none; {s_dark} }} }}
 :root[data-theme="dark"] {{ color-scheme: dark;
   --bg:#0e0e0d; --card:#1a1a19; --raise:#222220; --text:#f3f2ee; --text2:#c4c3bd; --muted:#8b8a85; --line:#2b2b29;
   --chip:#262624; --tile:#f1f0ec; --tile-ink:#141414;
   --panel:#1f1f1d; --panel-line:#30302d; --panel-nodata:#3a3a36;
-  --track:#2a2a28; --nodata:#3a3a36; --have:#2fbf5c; --maybe:#e0a72a; --none:#ef5a49; --off:#55544f;
+  --track:#2a2a28; --nodata:#3a3a36; --have:#2fbf5c; --maybe:#e0a72a; --term:#f08452; --none:#ef5a49; --off:#55544f;
   --shadow:none; {s_dark} }}
 * {{ -webkit-tap-highlight-color:transparent; }}
 body {{ margin:0; background:var(--bg); color:var(--text);
@@ -1215,9 +1224,9 @@ h2.section {{ font-size:20px; font-weight:600; margin:30px 0 4px; }}
 .ttl {{ flex:1; min-width:0; }} .ttl h2 {{ font-size:16px; }}
 .ttl .sub {{ display:block; color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .badge {{ flex:none; font-size:12px; font-weight:700; padding:6px 12px; border-radius:999px; color:#fff; white-space:nowrap; }}
-.badge.have {{ background:var(--have); }} .badge.stale {{ background:transparent; color:var(--maybe); box-shadow:inset 0 0 0 1.5px var(--maybe); }}
-.badge.term {{ background:transparent; color:var(--none); box-shadow:inset 0 0 0 1.5px var(--none); }}
-.badge.none {{ background:var(--none); }} .badge.unknown {{ background:var(--chip); color:var(--text2); }}
+.badge.have {{ background:#22b14c; }} .badge.stale {{ background:#fab219; color:#1b1500; }}
+.badge.term {{ background:#f08452; color:#1f0d03; }}
+.badge.none {{ background:#e5483d; }} .badge.unknown {{ background:var(--chip); color:var(--text2); }}
 table {{ width:100%; border-collapse:collapse; font-size:14px; }}
 th {{ text-align:left; color:var(--muted); font-weight:500; font-size:12px; padding:6px; border-bottom:1px solid var(--line); }}
 td {{ padding:9px 6px; border-bottom:1px solid var(--line); font-variant-numeric: tabular-nums; }}
@@ -1235,8 +1244,8 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 .hist li {{ margin:3px 0; color:var(--text2); }}
 @media (prefers-reduced-motion: reduce) {{ summary::before {{ transition:none; }} }}
 /* статусы в таблицах */
-.st-q {{ color:var(--maybe); font-weight:800; font-size:1.1em; cursor:help; }}
-.st-qr {{ color:var(--none); font-weight:800; font-size:1.1em; cursor:help; }} .st-no {{ color:var(--none); font-weight:700; }}
+.st-stale {{ color:var(--maybe); font-weight:700; cursor:help; }}
+.st-term {{ color:var(--term); font-weight:700; cursor:help; }} .st-no {{ color:var(--none); font-weight:700; }}
 .st-yes {{ color:var(--have); font-weight:700; }}
 /* цены — пилюли */
 .prices {{ margin:12px 0 0; font-size:13px; color:var(--muted); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }}
@@ -1315,6 +1324,7 @@ if (fuels.length) {{
     best = best || ['unknown', 'Нет информации', 4, 0];
     const badge = card.querySelector('.badge');
     badge.className = 'badge ' + best[0]; badge.textContent = best[1];
+    if (best[0] === 'have') badge.dataset.at = best[3]; else delete badge.dataset.at;
     card.dataset.rank = best[2]; card.dataset.ts = best[3];
   }});
   cards.sort((a, b) => (a.dataset.rank - b.dataset.rank) || (b.dataset.ts - a.dataset.ts))
@@ -1359,6 +1369,20 @@ function tickAgo() {{ const m = Math.round((Date.now() - updated) / 60000);
   document.getElementById('ago').textContent = '(' + (m < 1 ? 'только что' : m < 60 ? `${{m}} мин назад`
     : h < 24 ? `${{h}} ч${{m % 60 ? ' ' + m % 60 + ' мин' : ''}} назад` : `${{d}} дн назад`) + ')'; }}
 tickAgo(); setInterval(tickAgo, 30000);
+// «есть»: чем дольше нет нового подтверждения, тем ближе цвет к жёлтому (за 3 часа — полностью жёлтый, дальше «давно»)
+function paintFresh() {{
+  const now = Date.now() / 1000, span = {int(CONFIRM_FRESH.total_seconds())};
+  document.querySelectorAll('[data-at]').forEach(el => {{
+    const age = Math.max(0, now - el.dataset.at), k = Math.min(1, age / span), p = Math.round(k * 100);
+    if (el.classList.contains('badge')) {{
+      el.style.background = `color-mix(in oklab, #fab219 ${{p}}%, #22b14c)`;
+      el.style.color = k > .45 ? '#1b1500' : '';
+      const m = Math.floor(age / 60);
+      el.textContent = 'Есть · ' + (m < 60 ? m + ' мин' : Math.floor(m / 60) + ' ч' + (m % 60 ? ' ' + m % 60 + ' мин' : ''));
+    }} else el.style.color = `color-mix(in oklab, var(--maybe) ${{p}}%, var(--have))`;
+  }});
+}}
+paintFresh(); setInterval(paintFresh, 30000);
 async function checkFresh() {{
   if (location.protocol === 'file:') return;
   try {{ const r = await fetch(location.pathname + '?check=' + Date.now(), {{cache: 'no-store'}});
