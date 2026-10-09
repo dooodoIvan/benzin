@@ -93,10 +93,12 @@
   "state": "stale"
  },
  "741212|92": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-09T15:14:59.645025+03:00"
  },
  "741212|95": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-09T15:14:59.645025+03:00"
  },
  "2c0db4|95": {
   "state": "term"
@@ -124,7 +126,8 @@
   "state": "unknown"
  },
  "c6e61d|95": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-09T15:14:59.645025+03:00"
  },
  "c6e61d|95+": {
   "state": "stale"
