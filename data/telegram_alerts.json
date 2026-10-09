@@ -44,5 +44,14 @@
  },
  "fbe476|95+": {
   "state": "none"
+ },
+ "a9af09|95": {
+  "state": "term"
+ },
+ "a9af09|95+": {
+  "state": "unknown"
+ },
+ "a9af09|98": {
+  "state": "unknown"
  }
 }
