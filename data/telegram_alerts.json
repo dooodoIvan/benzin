@@ -8,7 +8,7 @@
   "state": "unknown"
  },
  "68d21d|95": {
-  "state": "have",
+  "state": "none",
   "last_alert": "2026-10-09T14:16:28.671498+03:00"
  },
  "68d21d|98": {
@@ -121,5 +121,11 @@
  },
  "da2b7e|95+": {
   "state": "unknown"
+ },
+ "c6e61d|95": {
+  "state": "term"
+ },
+ "c6e61d|95+": {
+  "state": "stale"
  }
 }
