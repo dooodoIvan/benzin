@@ -413,7 +413,7 @@ def station_state(fuels, now, wanted=None):
         return "term", "? терминал", 2, max(term)
     if fresh:
         return "none", "Нет", 3, max(v[0] for v in fresh.values())
-    return "unknown", "Нет данных", 4, None
+    return "unknown", "Нет информации", 4, None
 
 
 def when_text(t, now):
@@ -456,7 +456,7 @@ def notify_text(db, sids=None, wanted=None):
     for sid, fuels, (cls, label, _, when) in ordered_stations(db, now, sids, wanted):
         short = REG[sid]["short"]
         groups[cls].append(f"{short} ({when:%H:%M})" if when else short)
-    heads = {"have": "✅ Есть", "stale": "🟡 Было давно", "term": "❓ Терминал", "none": "❌ Нет", "unknown": "⚪ Нет данных"}
+    heads = {"have": "✅ Есть", "stale": "🟡 Было давно", "term": "❓ Терминал", "none": "❌ Нет", "unknown": "⚪ Нет информации"}
     lines = [f"{heads[c]}: " + ", ".join(v) for c, v in groups.items() if v]
     title = f"⛽ {fuels_title(wanted)} · {now:%H:%M} · есть на {len(groups['have'])} из {len(sids)}"
     return title, "\n".join(lines)
@@ -939,7 +939,7 @@ def write_report(db, path=None, sids=None, combos=None):
                     f'<td class="fuel">{fuel_name(fuel)}</td>'
                     f'<td>{status_html(avail, kind, seen_at, now)}</td><td>{seen_at:%d.%m %H:%M}</td>'
                     f'<td>{esc(queue or "—")}</td><td class="src">{KIND_RU[kind]}</td></tr>')
-        empty = '<p class="muted nodata">За последние сутки отчётов по выбранным маркам не было.</p>'
+        empty = '<p class="muted nodata">Информации пока нет: за последние сутки отчётов по этой заправке и выбранным маркам не было.</p>'
         table = ('<table><tr><th>Марка</th><th>Статус</th><th>Когда</th><th>Очередь</th><th>Источник</th></tr>'
                  + "".join(rows) + "</table>" + empty) if rows else empty
         hist = []
@@ -1067,7 +1067,7 @@ if (fuels.length) {{
     const st = JSON.parse(card.dataset.st || '{{}}');
     let best = null;
     wanted.forEach(f => {{ const v = st[f]; if (v && (!best || v[2] < best[2] || (v[2] === best[2] && v[3] > best[3]))) best = v; }});
-    best = best || ['unknown', 'Нет данных', 4, 0];
+    best = best || ['unknown', 'Нет информации', 4, 0];
     const badge = card.querySelector('.badge');
     badge.className = 'badge ' + best[0]; badge.textContent = best[1];
     card.dataset.rank = best[2]; card.dataset.ts = best[3];
@@ -1374,7 +1374,8 @@ def handle_stations_cb(token, cb, subs):
         return True
     if parts[1] == "done":
         text = ("✅ Сохранено. Ваши заправки:\n" + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids)
-                + "\n\nОповещения будут приходить по ним, сводка — кнопка «⛽ Сводка». Изменить — кнопка «📍 Заправки».")
+                + "\n\nОповещения будут приходить по ним, сводка — кнопка «⛽ Сводка» (обновится примерно через минуту). "
+                "Изменить — кнопка «📍 Заправки».")
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), text=text, parse_mode="HTML",
                 reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid)))
         return changed
@@ -1717,7 +1718,20 @@ def work_once():
     print(f"{datetime.now(MSK):%d.%m %H:%M} сбор: новых наблюдений {new}, {time.time() - t0:.0f} с", file=sys.stderr, flush=True)
 
 
+def save_on_stop(signum, frame):
+    """GitHub при отмене задачи присылает сигнал и даёт несколько секунд — сохраняем несохранённый выбор."""
+    if UNPUSHED["since"]:
+        try:
+            save_and_push()
+        except Exception:
+            pass
+    sys.exit(0)
+
+
 def cmd_worker(args):
+    import signal
+    signal.signal(signal.SIGTERM, save_on_stop)
+    signal.signal(signal.SIGINT, save_on_stop)
     start = datetime.now(MSK)
     deadline = start + timedelta(minutes=args.max_minutes)
     ws = start.replace(hour=WORK_START, minute=0, second=0, microsecond=0)
@@ -1766,8 +1780,13 @@ def cmd_worker(args):
                     pass
             do_now = False
             continue
-        if UNPUSHED["since"] and time.time() - UNPUSHED["since"] > 60:
-            save_and_push()  # выбор заправок и подписчиков сохраняем не реже раза в минуту
+        if UNPUSHED["since"] and time.time() - UNPUSHED["since"] > 10:
+            # пользователь поменял заправки или марки: сразу пересобрать сводку и сохранить выбор
+            try:
+                publish_page(open_db())
+            except Exception as e:
+                print(f"страница: ошибка {e}", file=sys.stderr)
+            save_and_push()
         try:
             poll_bot(wait=20)  # ждём сообщения боту до 20 с — заодно пауза цикла
         except Exception as e:
