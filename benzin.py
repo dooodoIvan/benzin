@@ -1231,6 +1231,42 @@ KEYBOARD_VERSION = 1  # увеличить, если поменяются кно
 KEYBOARD_TEXT = ("Внизу — кнопки:\n📍 Заправки — выбрать заправки\n🛢 Марки — выбрать марки топлива\n"
                  "⛽ Сводка (слева) — сводка и статистика по вашим заправкам.")
 
+WELCOME = (
+    "👋 Здравствуйте! Я бот «Мой бензин» — помогаю найти топливо на заправках Воронежа.\n\n"
+    "<b>Что я умею</b>\n"
+    "🔔 <b>Оповещения</b> — пишу, как только на ваших заправках появляется нужное топливо. "
+    "Источник — отчёты водителей и сводки канала @voronezh_benzin.\n"
+    "⛽ <b>Сводка</b> — кнопка слева от поля ввода: где топливо есть прямо сейчас, очереди, "
+    "а также статистика — когда его обычно привозят и когда оно заканчивается.\n"
+    "📍 <b>Заправки</b> и 🛢 <b>Марки</b> — кнопки под полем ввода: можно выбрать до 8 заправок и нужные марки.\n\n"
+    "Данные обновляются с 7:00 до 24:00 каждые 10 минут.\n\n"
+    "<b>Шаг 1 из 2.</b> Выберите марки топлива, о которых хотите получать информацию, и нажмите «Далее»:")
+STEP2 = ("<b>Шаг 2 из 2.</b> Выберите заправки (до 8), о которых хотите получать информацию.\n"
+         "Уже отмечены заправки по умолчанию — уберите лишние и добавьте свои. Сначала выберите сеть:")
+
+
+def user_entry(subs, cid):
+    return subs["owner"] if cid == owner_id() else subs["subscribers"].get(cid)
+
+
+def start_onboarding(token, subs, cid):
+    """Приветствие: что умеет бот + шаг 1 (марки). Дальше — шаг 2 (заправки) и итог."""
+    entry = user_entry(subs, cid)
+    entry["onboarding"] = "fuels"
+    _, rows = fuels_view(fuel_selection(subs, cid), onboarding=True)
+    say(token, cid, WELCOME, {"inline_keyboard": rows})
+
+
+def finish_onboarding(token, subs, cid):
+    entry = user_entry(subs, cid)
+    entry.pop("onboarding", None)
+    entry["kb"] = KEYBOARD_VERSION
+    sids, fuels = selection(subs, cid), fuel_selection(subs, cid)
+    say(token, cid, f"🎉 <b>Всё готово!</b>\n\nБуду писать, когда на ваших заправках появится {fuels_or(fuels)}.\n"
+                    "Сводка и статистика — кнопка «⛽ Сводка» слева от поля ввода.\n"
+                    "Изменить выбор — кнопки «📍 Заправки» и «🛢 Марки» внизу.", KEYBOARD)
+
+
 HELP_SUB = ("Бот присылает оповещение, когда на ваших заправках появляется нужное вам топливо.\n"
             "📍 Заправки — выбрать заправки (до 8)\n🛢 Марки — выбрать марки топлива\n"
             "Сводка со статистикой — кнопка «⛽ Сводка» внизу.\n/stop — отписаться.")
@@ -1329,6 +1365,13 @@ def handle_stations_cb(token, cb, subs):
         set_selection(subs, cid, sids)
         set_menu_button(token, cid, sids, fuel_selection(subs, cid))
     tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"], **({"text": notice, "show_alert": "true"} if notice else {}))
+    entry = user_entry(subs, cid)
+    if parts[1] == "done" and entry.get("onboarding") == "stations":  # шаг 2 пройден → итог
+        tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
+                text="✅ <b>Шаг 2 из 2.</b> Ваши заправки:\n" + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids),
+                reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid)))
+        finish_onboarding(token, subs, cid)
+        return True
     if parts[1] == "done":
         text = ("✅ Сохранено. Ваши заправки:\n" + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids)
                 + "\n\nОповещения будут приходить по ним, сводка — кнопка «⛽ Сводка». Изменить — кнопка «📍 Заправки».")
@@ -1336,12 +1379,14 @@ def handle_stations_cb(token, cb, subs):
                 reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid)))
         return changed
     text, rows = stations_view(sids, view)
+    if view == "home" and entry.get("onboarding") == "stations":
+        text = STEP2
     tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), text=text, parse_mode="HTML",
             reply_markup=json.dumps({"inline_keyboard": rows}))
     return changed
 
 
-def fuels_view(fuels):
+def fuels_view(fuels, onboarding=False):
     rows, row = [], []
     for f in FUEL_CHOICES:
         row.append({"text": f"{'✅' if f in fuels else '▫️'} {fuel_name(f)}{' (Pulsar)' if f == '95+' else ''}",
@@ -1350,7 +1395,7 @@ def fuels_view(fuels):
             rows.append(row)
             row = []
     rows += [row] if row else []
-    rows.append([{"text": "Готово", "callback_data": "fu:done"}])
+    rows.append([{"text": "Далее →" if onboarding else "Готово", "callback_data": "fu:done"}])
     return ("<b>Марки топлива</b> — по ним приходят оповещения и строится сводка.\n"
             f"Сейчас: {fuels_title(fuels)}. Нажмите, чтобы добавить или убрать:", rows)
 
@@ -1373,14 +1418,23 @@ def handle_fuels_cb(token, cb, subs):
         set_fuels(subs, cid, fuels)
         set_menu_button(token, cid, selection(subs, cid), fuels)
     tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"], **({"text": notice, "show_alert": "true"} if notice else {}))
+    entry = user_entry(subs, cid)
+    if data == "fu:done" and entry.get("onboarding") == "fuels":  # шаг 1 пройден → шаг 2
+        entry["onboarding"] = "stations"
+        tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
+                text=WELCOME.split("<b>Шаг 1")[0] + f"✅ <b>Шаг 1 из 2.</b> Марки: {fuels_title(fuels)}.")
+        _, rows = stations_view(selection(subs, cid), "home")
+        say(token, cid, STEP2, {"inline_keyboard": rows})
+        return True
     if data == "fu:done":
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
                 text=f"✅ Сохранено. Марки: {fuels_title(fuels)}.\nОповещения и сводка — по ним. Изменить — кнопка «🛢 Марки».",
                 reply_markup=page_button(datetime.now(MSK), selection(subs, cid), fuels))
         return changed
-    text, rows = fuels_view(fuels)
-    tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), text=text, parse_mode="HTML",
-            reply_markup=json.dumps({"inline_keyboard": rows}))
+    onboarding = entry.get("onboarding") == "fuels"
+    text, rows = fuels_view(fuels, onboarding)
+    tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
+            text=WELCOME if onboarding else text, reply_markup=json.dumps({"inline_keyboard": rows}))
     return changed
 
 
@@ -1401,6 +1455,9 @@ def handle_message(token, msg, subs):
         view_text, rows = fuels_view(fuel_selection(subs, cid))
         say(token, cid, view_text, {"inline_keyboard": rows})
         return False
+    if text.startswith("/start") and (cid == owner or cid in subs["subscribers"]):
+        start_onboarding(token, subs, cid)
+        return True
     if cid == owner:
         if text.startswith("/list"):
             if not subs["subscribers"]:
@@ -1461,12 +1518,8 @@ def handle_callback(token, cb, subs):
         sids = default_sids()
         subs["subscribers"][cid] = {"name": info["name"], "since": datetime.now(MSK).isoformat(), "stations": sids}
         set_menu_button(token, cid, sids)
-        say(token, cid, "✅ Владелец подтвердил доступ. Сейчас выбраны заправки по умолчанию:\n"
-                        + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids)
-                        + f"\nМарки: {fuels_title(DEFAULT_FUELS)}.\n\nСвои заправки и марки выбираются кнопками внизу.",
-            json.loads(page_button(datetime.now(MSK), sids)))
-        say(token, cid, KEYBOARD_TEXT, KEYBOARD)
-        subs["subscribers"][cid]["kb"] = KEYBOARD_VERSION
+        say(token, cid, "✅ Владелец бота подтвердил доступ.")
+        start_onboarding(token, subs, cid)
         done(f"✅ Добавлено в подписчики: {html.escape(info['name'])}.")
         return True
     if action == "no" and cid in subs["pending"]:
