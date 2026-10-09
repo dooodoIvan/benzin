@@ -60,10 +60,12 @@
   "state": "term"
  },
  "5c1960|92": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-09T16:07:21.763871+03:00"
  },
  "5c1960|95": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-09T16:07:21.763871+03:00"
  },
  "68d21d|92": {
   "state": "term"
