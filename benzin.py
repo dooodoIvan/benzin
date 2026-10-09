@@ -1553,8 +1553,12 @@ def handle_message(token, msg, subs):
         return True
     if cid == owner:
         if text.startswith("/list"):
+            for pid, info in subs["pending"].items():  # сначала — запросы, которые ждут подтверждения
+                say(token, cid, f"🔔 Ждёт подтверждения: <b>{html.escape(info['name'])}</b> (запрос {info['at'][:16].replace('T', ' ')})",
+                    {"inline_keyboard": [[{"text": "✅ Добавить", "callback_data": f"sub:ok:{pid}"},
+                                          {"text": "❌ Отклонить", "callback_data": f"sub:no:{pid}"}]]})
             if not subs["subscribers"]:
-                say(token, cid, "Подписчиков пока нет. Чтобы подписаться, человек нажимает «Запустить» у бота, а вы подтверждаете.")
+                say(token, cid, "Подтверждённых подписчиков пока нет. Чтобы подписаться, человек нажимает «Запустить» у бота, а вы подтверждаете.")
             for sid, info in subs["subscribers"].items():
                 n = len(clean_selection(info.get("stations")))
                 say(token, cid, f"👤 {html.escape(info['name'])}, с {info['since'][:10]}, заправок: {n or 'по умолчанию'}",
@@ -1654,7 +1658,7 @@ def setup_bot(db):
         {"command": "stations", "description": "Выбрать свои заправки"},
         {"command": "fuels", "description": "Выбрать марки топлива"},
         {"command": "refresh", "description": "Обновить данные сейчас"},
-        {"command": "list", "description": "Подписчики"}]))
+        {"command": "list", "description": "Подписчики и запросы"}]))
     for cid, sids, fuels in all_selections():
         try:
             set_menu_button(token, cid, sids, fuels)
