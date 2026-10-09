@@ -1,0 +1,48 @@
+name: collect
+run-name: ${{ github.event_name == 'schedule' && 'Будильник' || (inputs.reason == 'chain' && 'Продолжение смены' || 'Обновить сейчас') }}
+
+on:
+  # Сбор идёт внутри одной долгой задачи (benzin.py worker) с 12:00 до 24:00 МСК строго по расписанию:
+  # 12–18 каждые 45 мин, 18–24 каждые 10 мин. Каждые ~6 часов задача сама запускает своё продолжение.
+  # Расписание ниже — только «будильник» на случай, если задача не работает (время UTC = МСК − 3).
+  schedule:
+    - cron: "7,22,37,52 8-20 * * *"   # 11:07–23:52 МСК каждые 15 минут
+  workflow_dispatch:                  # кнопка «Обновить сейчас»: Actions → collect → Run workflow
+    inputs:
+      reason:
+        description: "Служебное поле — оставьте как есть"
+        type: string
+        default: manual
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
+      GH_TOKEN: ${{ github.token }}
+      REASON: ${{ github.event_name == 'schedule' && 'schedule' || inputs.reason || 'manual' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Подготовка
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$PAGES_DEPLOY_KEY" ]; then
+            mkdir -p ~/.ssh && printf '%s\n' "$PAGES_DEPLOY_KEY" > ~/.ssh/pages && chmod 600 ~/.ssh/pages
+            echo "PAGES_KEY_FILE=$HOME/.ssh/pages" >> "$GITHUB_ENV"
+          fi
+
+      - name: Сбор по расписанию (12–24 МСК)
+        run: python3 -u benzin.py worker --reason "$REASON"

@@ -1,0 +1,4 @@
+report.html
+__pycache__/
+data/*.tmp
+data/telegram_chat.txt
