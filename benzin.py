@@ -1133,7 +1133,7 @@ def write_report(db, path=None, sids=None, combos=None):
                 hist.append(f'<li data-fuel="{esc(fuel)}"{hide}><b>{t:%H:%M}</b> '
                             f'{fuel_name(fuel)} — {status_html(avail, kind, t, now)} <span class="muted">({KIND_RU[kind]})</span></li>')
         hist_html = (f'<details class="hist"><summary>Все отчёты за сутки (<span class="n">0</span>)</summary>'
-                     f'<div class="dc"><ul>{"".join(hist[:120])}</ul></div></details>' if hist else "")
+                     f'<div class="dc"><ul>{"".join(hist[:60])}</ul></div></details>' if hist else "")
         cards.append(f'<section class="card st{"" if sid in shown else " nosel"}" data-sid="{sid}" '
                      f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}"><div class="head">'
                      f'<h2>{esc(REG[sid]["name"])}</h2><span class="badge {cls}">{label}</span></div>{table}{price_html}{hist_html}</section>')
@@ -1175,7 +1175,7 @@ summary {{ cursor:pointer; color:var(--text2); list-style:none; user-select:none
 summary::-webkit-details-marker {{ display:none; }}
 summary::before {{ content:"▸"; display:inline-block; width:1em; transition:transform .22s ease; }}
 details[open] > summary::before {{ transform:rotate(90deg); }}
-details > .dc {{ overflow:hidden; }}
+details > .dc {{ overflow:hidden; will-change:height, opacity; }}
 @media (prefers-reduced-motion: reduce) {{ summary::before {{ transition:none; }} }}
 h2.section {{ font-size:19px; margin:28px 0 2px; }}
 .topbar {{ display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; }}
@@ -1319,24 +1319,35 @@ document.getElementById('refresh').addEventListener('click', e => {{
   if (tg && tg.initData) {{ e.preventDefault(); tg.openLink(e.currentTarget.href); }}
 }});
 if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) Telegram.WebApp.ready();
-// плавное раскрытие и сворачивание списков (высота + прозрачность)
+// плавное раскрытие и сворачивание списков. Высоту фиксируем до старта анимации и держим до конца —
+// иначе в первом/последнем кадре мелькает полный список.
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.querySelectorAll('details').forEach(d => {{
   const s = d.querySelector(':scope > summary'), c = d.querySelector(':scope > .dc');
   if (!s || !c || reduceMotion) return;
   let anim = null;
+  const reset = () => {{ c.style.height = ''; c.style.opacity = ''; }};
   s.addEventListener('click', e => {{
     e.preventDefault();
-    if (anim) anim.cancel();
-    if (d.open) {{
-      const a = anim = c.animate([{{height: c.offsetHeight + 'px', opacity: 1}}, {{height: '0px', opacity: 0}}],
-                                 {{duration: 200, easing: 'ease-in'}});
-      a.finished.then(() => {{ d.open = false; if (anim === a) anim = null; }}).catch(() => {{}});
+    // текущая видимая высота (в том числе посреди анимации); у закрытого списка — 0
+    const cur = d.open ? c.getBoundingClientRect().height : 0;
+    if (anim) {{ anim.cancel(); anim = null; }}
+    const closing = d.open && c.dataset.state !== 'closing';
+    if (closing) {{
+      c.dataset.state = 'closing';
+      c.style.height = cur + 'px';
+      const a = anim = c.animate([{{height: cur + 'px', opacity: 1}}, {{height: '0px', opacity: 0}}],
+                                 {{duration: 220, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards'}});
+      a.finished.then(() => {{ d.open = false; a.cancel(); reset(); delete c.dataset.state; anim = null; }}).catch(() => {{}});
     }} else {{
+      c.dataset.state = 'opening';
+      c.style.height = cur + 'px';
+      c.style.opacity = d.open ? '' : '0';
       d.open = true;
-      const a = anim = c.animate([{{height: '0px', opacity: 0}}, {{height: c.offsetHeight + 'px', opacity: 1}}],
-                                 {{duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)'}});
-      a.finished.then(() => {{ if (anim === a) anim = null; }}).catch(() => {{}});
+      const full = c.scrollHeight;
+      const a = anim = c.animate([{{height: cur + 'px', opacity: cur ? 1 : 0}}, {{height: full + 'px', opacity: 1}}],
+                                 {{duration: 300, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards'}});
+      a.finished.then(() => {{ a.cancel(); reset(); delete c.dataset.state; anim = null; }}).catch(() => {{}});
     }}
   }});
 }});
