@@ -105,7 +105,8 @@
   "state": "have"
  },
  "443eed|95": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-09T15:10:15.830881+03:00"
  },
  "443eed|95+": {
   "state": "unknown"
