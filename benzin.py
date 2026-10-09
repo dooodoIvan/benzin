@@ -1217,8 +1217,7 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
 <h1>⛽ Бензин · <span id="ftitle">{fuels_title(DEFAULT_FUELS)}</span></h1>
 <div class="topbar">
   <div class="muted">Обновлено <b id="updated">{now:%d.%m.%Y в %H:%M}</b> <span id="ago"></span>.
-  Данные из канала @voronezh_benzin. Сбор с 7:00 до 24:00 каждые 10 минут, ночью не ведётся. Бледные строки — старше суток.
-  Свои заправки и марки выбираются в боте: /stations и /fuels.</div>
+  Данные из канала @voronezh_benzin. Сбор с 7:00 до 24:00 каждые 10 минут, ночью не ведётся.</div>
   <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener">🔄 Обновить сейчас</a>
   <div class="muted nosel" id="refresh-bot">Обновить данные — кнопка «🔄 Обновить» в боте.</div>
 </div>
@@ -1428,7 +1427,15 @@ BTN_STATIONS, BTN_FUELS, BTN_REFRESH, BTN_PAUSE = "📍 Заправки", "🛢
 KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}, {"text": BTN_PAUSE}]],
             "resize_keyboard": True, "is_persistent": True}
 KEYBOARD_VERSION = 3  # увеличить, если поменяются кнопки — тогда бот пришлёт их всем заново
-BTN_SUBS, BTN_WAIT = "👥 Подписчики", "⏳ Ожидаю подтверждения"
+BTN_SUBS, BTN_WAIT, BTN_REQUEST = "👥 Подписчики", "⏳ Ожидаю подтверждения", "📨 Отправить запрос"
+REQUEST_KEYBOARD = {"keyboard": [[{"text": BTN_REQUEST}]], "resize_keyboard": True, "is_persistent": True}
+INTRO_TEXT = ("👋 Здравствуйте! Это бот «Мои заправки» — он показывает, где в Воронеже есть нужное топливо, "
+              "и присылает оповещения, когда оно появляется на выбранных вами заправках.\n\n"
+              "Доступ к боту выдаёт его владелец. Нажмите кнопку <b>«📨 Отправить запрос»</b> внизу — "
+              "как только владелец подтвердит, я напишу.")
+BOT_DESCRIPTION = ("Показываю, где в Воронеже есть АИ-92, АИ-95, АИ-98 и дизель, и присылаю оповещения, когда топливо "
+                   "появляется на выбранных вами заправках. Нажмите «Запустить», а затем «📨 Отправить запрос».")
+BOT_SHORT_DESCRIPTION = "Где в Воронеже есть бензин: оповещения и сводка по вашим заправкам."
 OWNER_KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}, {"text": BTN_PAUSE}],
                                [{"text": BTN_SUBS}]], "resize_keyboard": True, "is_persistent": True}
 OWNER_KEYBOARD_VERSION = 4
@@ -1801,10 +1808,10 @@ def handle_message(token, msg, subs):
     if text.startswith("/stop"):
         if cid in subs["subscribers"]:
             info = subs["subscribers"].pop(cid)
-            say(token, cid, "Вы отписались от оповещений. Чтобы подписаться снова, отправьте /start.")
+            say(token, cid, "Вы отписались от оповещений. Чтобы подписаться снова, нажмите «📨 Отправить запрос».", REQUEST_KEYBOARD)
             say(token, owner, f"👋 Отписка от оповещений: {html.escape(info['name'])}.")
             return True
-        say(token, cid, "Вы и так не подписаны. /start — попросить доступ.")
+        say(token, cid, INTRO_TEXT, REQUEST_KEYBOARD)
         return False
     if cid in subs["subscribers"]:
         say(token, cid, ("Вы уже получаете оповещения.\n\n" if text.startswith("/start") else "") + HELP_SUB, keyboard_for(cid))
@@ -1812,7 +1819,10 @@ def handle_message(token, msg, subs):
     if cid in subs["pending"]:
         say(token, cid, WAIT_TEXT, WAIT_KEYBOARD)
         return False
-    if text.startswith("/start"):
+    if text != BTN_REQUEST:  # новый пользователь: сначала знакомство и кнопка «Отправить запрос»
+        say(token, cid, INTRO_TEXT, REQUEST_KEYBOARD)
+        return False
+    if text == BTN_REQUEST:
         name = user_name(user)
         subs["pending"][cid] = {"name": name, "at": datetime.now(MSK).isoformat()}
         say(token, owner, f"🔔 <b>{html.escape(name)}</b> хочет получать оповещения о появлении бензина.",
@@ -1820,7 +1830,6 @@ def handle_message(token, msg, subs):
                                   {"text": "❌ Отклонить", "callback_data": f"sub:no:{cid}"}]]})
         say(token, cid, WAIT_TEXT, WAIT_KEYBOARD)
         return True
-    say(token, cid, "Это бот оповещений о бензине в Воронеже. Отправьте /start, чтобы попросить доступ.")
     return False
 
 
@@ -1875,6 +1884,12 @@ def setup_bot(db):
         return
     token, owner = os.environ["TELEGRAM_TOKEN"], owner_id()
     load_registry(db)
+    try:
+        if tg_call(token, "getMyDescription").get("result", {}).get("description") != BOT_DESCRIPTION:
+            tg_call(token, "setMyDescription", description=BOT_DESCRIPTION)
+            tg_call(token, "setMyShortDescription", short_description=BOT_SHORT_DESCRIPTION)
+    except Exception as e:
+        print(f"описание бота: {e}", file=sys.stderr)
     try:
         if tg_call(token, "getMyName").get("result", {}).get("name") != BOT_NAME:
             tg_call(token, "setMyName", name=BOT_NAME)
