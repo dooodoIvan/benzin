@@ -609,11 +609,9 @@ def page_button(now, sids=None, fuels=None, cid=None):
     return json.dumps({"inline_keyboard": [[{"text": "⛽ Открыть сводку", "web_app": {"url": url}}]]})
 
 
-def set_menu_button(token, chat_id, sids=None, fuels=None):
-    """Постоянная кнопка «⛽ Сводка» рядом с полем ввода — открывает сводку со своими заправками и марками."""
-    url = page_url(sids, fuels, own=str(chat_id) == owner_id())
-    tg_call(token, "setChatMenuButton", chat_id=chat_id, menu_button=json.dumps(
-        {"type": "web_app", "text": "⛽ Сводка", "web_app": {"url": url}}))
+def reset_menu_button(token, chat_id):
+    """Слева от поля ввода — обычное меню команд (сводка открывается большой кнопкой «⛽ Сводка» внизу)."""
+    tg_call(token, "setChatMenuButton", chat_id=chat_id, menu_button=json.dumps({"type": "default"}))
 
 
 def tg_chat_id(token):
@@ -1803,7 +1801,6 @@ def handle_stations_cb(token, cb, subs):
         notice = "Выберите хотя бы одну заправку: откройте сеть и отметьте нужные."
     if changed:
         set_selection(subs, cid, sids)
-        set_menu_button(token, cid, sids, fuel_selection(subs, cid))
     tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"], **({"text": notice, "show_alert": "true"} if notice else {}))
     entry = user_entry(subs, cid)
     if parts[1] == "done" and sids and entry.get("onboarding") == "stations":  # шаг 2 пройден → итог
@@ -1858,7 +1855,6 @@ def handle_fuels_cb(token, cb, subs):
         data = "fu:home"
     if changed:
         set_fuels(subs, cid, fuels)
-        set_menu_button(token, cid, selection(subs, cid), fuels)
     tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"], **({"text": notice, "show_alert": "true"} if notice else {}))
     entry = user_entry(subs, cid)
     if data == "fu:done" and entry.get("onboarding") == "fuels":  # шаг 1 пройден → шаг 2
@@ -1980,7 +1976,6 @@ def handle_callback(token, cb, subs):
     if action == "ok" and cid in subs["pending"]:
         info = subs["pending"].pop(cid)
         subs["subscribers"][cid] = {"name": info["name"], "since": datetime.now(MSK).isoformat(), "stations": [], "fuels": []}
-        set_menu_button(token, cid, [], [])
         subs["subscribers"][cid]["kb"] = KEYBOARD_VERSION
         say(token, cid, "✅ Владелец бота подтвердил доступ.", keyboard_for(cid, subs))
         start_onboarding(token, subs, cid)
@@ -2036,7 +2031,7 @@ def setup_bot(db):
         {"command": "list", "description": "Подписчики и запросы"}]))
     for cid, sids, fuels in all_selections():
         try:
-            set_menu_button(token, cid, sids, fuels)
+            reset_menu_button(token, cid)
         except Exception as e:
             print(f"кнопка меню …{cid[-4:]}: {e}", file=sys.stderr)
     subs, changed = load_subs(), False
