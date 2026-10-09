@@ -1284,8 +1284,8 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 .prices .chip {{ background:var(--chip); color:var(--text2); border-radius:999px; padding:5px 11px; }}
 .prices .chip b {{ color:var(--text); font-weight:700; }} .p-up {{ color:var(--none); font-size:12px; }} .p-down {{ color:var(--have); font-size:12px; }}
 .card > table:not(.tbl) {{ table-layout:fixed; }}
-.card > table:not(.tbl) th:nth-child(1) {{ width:16%; }} .card > table:not(.tbl) th:nth-child(2) {{ width:14%; }}
-.card > table:not(.tbl) th:nth-child(3) {{ width:20%; }} .card > table:not(.tbl) th:nth-child(4) {{ width:20%; }}
+.card > table:not(.tbl) th:nth-child(1) {{ width:15%; }} .card > table:not(.tbl) th:nth-child(2) {{ width:19%; }}
+.card > table:not(.tbl) th:nth-child(3) {{ width:17%; }} .card > table:not(.tbl) th:nth-child(4) {{ width:20%; }}
 /* статистика — тёмная панель, как карточка с графиком на макете */
 .card.stats {{ background:var(--panel); color:var(--panel-text); padding:18px 16px;
   --text:var(--panel-text); --text2:var(--panel-text2); --muted:var(--panel-muted); --line:var(--panel-line); --nodata:var(--panel-nodata); }}
@@ -1312,7 +1312,9 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 .foot {{ margin-top:22px; font-size:13px; color:var(--muted); }}
 #tip {{ position:fixed; pointer-events:none; background:var(--raise); color:var(--text); border-radius:12px;
   padding:8px 11px; font-size:13px; box-shadow:0 10px 30px -10px rgba(0,0,0,.35); display:none; max-width:280px; z-index:10; white-space:pre-line; }}
-@media (max-width:560px) {{ .card > table:not(.tbl) th:nth-child(5), .card > table:not(.tbl) td:nth-child(5) {{ display:none; }} }}
+@media (max-width:560px) {{ .card > table:not(.tbl) th:nth-child(5), .card > table:not(.tbl) td:nth-child(5) {{ display:none; }}
+  .card > table:not(.tbl) th:nth-child(1) {{ width:22%; }} .card > table:not(.tbl) th:nth-child(2) {{ width:29%; }}
+  .card > table:not(.tbl) th:nth-child(3) {{ width:21%; }} .card > table:not(.tbl) th:nth-child(4) {{ width:28%; }} }}
 </style></head><body data-updated="{now.isoformat()}"><main>
 <h1>Обновлено <b>{now:%H:%M}</b>, {now:%d.%m.%Y} <span class="ago" id="ago"></span></h1>
 <div class="topbar">
