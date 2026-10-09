@@ -1217,7 +1217,7 @@ h2.section {{ font-size:20px; font-weight:600; margin:30px 0 4px; }}
 .ttl {{ flex:1; min-width:0; }} .ttl h2 {{ font-size:16px; }}
 .ttl .sub {{ display:block; color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .badge {{ flex:none; font-size:12px; font-weight:700; padding:6px 12px; border-radius:999px; color:#fff; white-space:nowrap; }}
-.badge.have {{ background:var(--have); }} .badge.stale {{ background:#fab219; color:#1b1500; }}
+.badge.have {{ background:var(--have); }} .badge.stale {{ background:transparent; color:var(--maybe); box-shadow:inset 0 0 0 1.5px var(--maybe); }}
 .badge.term {{ background:transparent; color:var(--none); box-shadow:inset 0 0 0 1.5px var(--none); }}
 .badge.none {{ background:var(--none); }} .badge.unknown {{ background:var(--chip); color:var(--text2); }}
 table {{ width:100%; border-collapse:collapse; font-size:14px; }}
@@ -1275,7 +1275,7 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
   padding:8px 11px; font-size:13px; box-shadow:0 10px 30px -10px rgba(0,0,0,.35); display:none; max-width:280px; z-index:10; white-space:pre-line; }}
 @media (max-width:560px) {{ .card > table:not(.tbl) th:nth-child(5), .card > table:not(.tbl) td:nth-child(5) {{ display:none; }} }}
 </style></head><body data-updated="{now.isoformat()}"><main>
-<h1><b>{now:%H:%M}</b>, {now:%d.%m.%Y} <span class="ago" id="ago"></span></h1>
+<h1>Обновлено <b>{now:%H:%M}</b>, {now:%d.%m.%Y} <span class="ago" id="ago"></span></h1>
 <div class="topbar">
   <div class="muted">Сводка по <b id="ftitle">{fuels_title(DEFAULT_FUELS)}</b>. Сбор с 7:00 до 24:00 каждые 10 минут, ночью не ведётся.</div>
   <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg> Обновить сейчас</a>
