@@ -1166,7 +1166,7 @@ def write_report(db, path=None, sids=None, combos=None):
 <script>
 (function () {{  // в Telegram — тема как в самом Telegram
   const tg = window.Telegram && Telegram.WebApp;
-  if (tg && tg.initData && tg.colorScheme) document.documentElement.dataset.theme = tg.colorScheme;
+  if (tg && tg.platform && tg.platform !== 'unknown' && tg.colorScheme) document.documentElement.dataset.theme = tg.colorScheme;
 }})();
 </script>
 <style>
@@ -1349,7 +1349,8 @@ document.querySelectorAll('.fblock:not(.nosel) .events, .fblock .events').forEac
   if (!shown.length) ul.nextElementSibling.hidden = false;
 }});
 // «Обновить сейчас» (запуск сбора на GitHub) доступен только владельцу; в Telegram у остальных — подсказка про кнопку в боте
-if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData && params.get('own') !== '1') {{
+const inTg = !!(window.Telegram && Telegram.WebApp && Telegram.WebApp.platform && Telegram.WebApp.platform !== 'unknown');
+if (inTg && params.get('own') !== '1') {{
   document.getElementById('refresh').classList.add('nosel');
   document.getElementById('refresh-bot').classList.remove('nosel');
 }}
@@ -1371,9 +1372,9 @@ setInterval(checkFresh, 30000);
 document.getElementById('refresh').addEventListener('click', e => {{
   document.getElementById('hint').hidden = false;
   const tg = window.Telegram && Telegram.WebApp;
-  if (tg && tg.initData) {{ e.preventDefault(); tg.openLink(e.currentTarget.href); }}
+  if (inTg) {{ e.preventDefault(); tg.openLink(e.currentTarget.href); }}
 }});
-if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) {{
+if (inTg) {{
   const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
   try {{ Telegram.WebApp.setHeaderColor(bg); Telegram.WebApp.setBackgroundColor(bg); }} catch (e) {{}}
   Telegram.WebApp.ready();
@@ -1530,8 +1531,9 @@ BOT_NAME = "Мои заправки"
 BTN_STATIONS, BTN_FUELS, BTN_REFRESH, BTN_PAUSE = "📍 Заправки", "🛢 Марки", "🔄 Обновить", "🔕 Пауза"
 KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}, {"text": BTN_PAUSE}]],
             "resize_keyboard": True, "is_persistent": True}
-KEYBOARD_VERSION = 3  # увеличить, если поменяются кнопки — тогда бот пришлёт их всем заново
+KEYBOARD_VERSION = 4  # увеличить, если поменяются кнопки — тогда бот пришлёт их всем заново
 BTN_SUBS, BTN_WAIT, BTN_REQUEST = "👥 Подписчики", "⏳ Ожидаю подтверждения", "📨 Отправить запрос"
+BTN_SUMMARY = "⛽ Сводка"
 REQUEST_KEYBOARD = {"keyboard": [[{"text": BTN_REQUEST}]], "resize_keyboard": True, "is_persistent": True}
 INTRO_TEXT = ("👋 Здравствуйте! Это бот «Мои заправки» — он показывает, где в Воронеже есть нужное топливо, "
               "и присылает оповещения, когда оно появляется на выбранных вами заправках.\n\n"
@@ -1542,7 +1544,7 @@ BOT_DESCRIPTION = ("Показываю, где в Воронеже есть АИ
 BOT_SHORT_DESCRIPTION = "Где в Воронеже есть бензин: оповещения и сводка по вашим заправкам."
 OWNER_KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}, {"text": BTN_PAUSE}],
                                [{"text": BTN_SUBS}]], "resize_keyboard": True, "is_persistent": True}
-OWNER_KEYBOARD_VERSION = 4
+OWNER_KEYBOARD_VERSION = 5
 WAIT_KEYBOARD = {"keyboard": [[{"text": BTN_WAIT}]], "resize_keyboard": True, "is_persistent": True}
 WAIT_TEXT = ("⏳ <b>Ваш запрос ожидает подтверждения.</b>\n\n"
              "Я отправил его владельцу бота. Как только он подтвердит доступ, я сразу напишу — "
@@ -1630,16 +1632,36 @@ def paused_ids():
     return {cid for cid, entry in people if pause_state(entry, now)}
 
 
-def keyboard_for(cid):
-    return OWNER_KEYBOARD if cid == owner_id() else KEYBOARD
+def keyboard_for(cid, subs):
+    """Кнопки под полем ввода; сверху — большая «⛽ Сводка» со своими заправками и марками."""
+    base = OWNER_KEYBOARD if cid == owner_id() else KEYBOARD
+    url = page_url(selection(subs, cid), fuel_selection(subs, cid), own=cid == owner_id())
+    entry = user_entry(subs, cid)
+    if entry is not None:
+        entry["kb_url"] = url
+    return dict(base, keyboard=[[{"text": BTN_SUMMARY, "web_app": {"url": url}}]] + base["keyboard"])
+
+
+def refresh_keyboard(token, subs, cid):
+    """После «Готово»: если выбор поменялся — прислать кнопки с новой ссылкой в «⛽ Сводка»."""
+    if not keyboard_url_stale(subs, cid):
+        return False
+    say(token, cid, "⛽ Кнопка «Сводка» внизу теперь показывает ваш выбор.", keyboard_for(cid, subs))
+    return True
+
+
+def keyboard_url_stale(subs, cid):
+    """Выбор поменялся, а в кнопке «⛽ Сводка» ещё старая ссылка."""
+    entry = user_entry(subs, cid)
+    return entry is not None and entry.get("kb_url") != page_url(selection(subs, cid), fuel_selection(subs, cid),
+                                                                 own=cid == owner_id())
 
 
 def keyboard_version(cid):
     return OWNER_KEYBOARD_VERSION if cid == owner_id() else KEYBOARD_VERSION
-KEYBOARD_TEXT = ("Внизу — кнопки:\n📍 Заправки — выбрать заправки\n🛢 Марки — выбрать марки топлива\n"
+KEYBOARD_TEXT = ("Внизу — кнопки:\n⛽ Сводка — сводка и статистика по вашим заправкам\n📍 Заправки — выбрать заправки\n🛢 Марки — выбрать марки топлива\n"
                  "🔄 Обновить — собрать свежие данные прямо сейчас\n"
-                 "🔕 Пауза — временно не присылать оповещения\n"
-                 "⛽ Сводка (слева) — сводка и статистика по вашим заправкам.")
+                 "🔕 Пауза — временно не присылать оповещения")
 REFRESH = {"waiting": set(), "last": 0.0}  # кто нажал «Обновить» и когда данные обновлялись в последний раз
 REFRESH_MIN = 60  # не чаще раза в минуту
 
@@ -1648,7 +1670,7 @@ WELCOME = (
     "<b>Что я умею</b>\n"
     "🔔 <b>Оповещения</b> — пишу, как только на ваших заправках появляется нужное топливо. "
     "Источник — отчёты водителей и данные терминалов оплаты.\n"
-    "⛽ <b>Сводка</b> — кнопка слева от поля ввода: где топливо есть прямо сейчас, очереди, "
+    "⛽ <b>Сводка</b> — большая кнопка под полем ввода: где топливо есть прямо сейчас, очереди, "
     "а также статистика — когда его обычно привозят и когда оно заканчивается.\n"
     "📍 <b>Заправки</b> и 🛢 <b>Марки</b> — кнопки под полем ввода: можно выбрать до 10 заправок и нужные марки.\n"
     "🔄 <b>Обновить</b> — собрать свежие данные прямо сейчас.\n"
@@ -1677,8 +1699,8 @@ def finish_onboarding(token, subs, cid):
     entry["kb"] = keyboard_version(cid)
     sids, fuels = selection(subs, cid), fuel_selection(subs, cid)
     say(token, cid, f"🎉 <b>Всё готово!</b>\n\nБуду писать, когда на ваших заправках появится {fuels_or(fuels)}.\n"
-                    "Сводка и статистика — кнопка «⛽ Сводка» слева от поля ввода.\n"
-                    "Изменить выбор — кнопки «📍 Заправки» и «🛢 Марки» внизу.", keyboard_for(cid))
+                    "Сводка и статистика — кнопка «⛽ Сводка» внизу.\n"
+                    "Изменить выбор — кнопки «📍 Заправки» и «🛢 Марки».", keyboard_for(cid, subs))
 
 
 HELP_SUB = ("Бот присылает оповещение, когда на ваших заправках появляется нужное вам топливо.\n"
@@ -1796,7 +1818,7 @@ def handle_stations_cb(token, cb, subs):
                 "Изменить — кнопка «📍 Заправки».")
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), text=text, parse_mode="HTML",
                 reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid), cid))
-        return changed
+        return refresh_keyboard(token, subs, cid) or changed
     text, rows = stations_view(sids, view)
     if view == "home" and entry.get("onboarding") == "stations":
         text = STEP2
@@ -1850,7 +1872,7 @@ def handle_fuels_cb(token, cb, subs):
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
                 text=f"✅ Сохранено. Марки: {fuels_title(fuels)}.\nОповещения и сводка — по ним. Изменить — кнопка «🛢 Марки».",
                 reply_markup=page_button(datetime.now(MSK), selection(subs, cid), fuels, cid))
-        return changed
+        return refresh_keyboard(token, subs, cid) or changed
     onboarding = entry.get("onboarding") == "fuels"
     text, rows = fuels_view(fuels, onboarding)
     tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
@@ -1907,8 +1929,8 @@ def handle_message(token, msg, subs):
                     {"inline_keyboard": [[{"text": "❌ Удалить", "callback_data": f"sub:del:{sid}"}]]})
         else:
             say(token, cid, "Вы владелец бота: оповещения приходят вам и подтверждённым подписчикам — каждому по его заправкам и маркам.\n"
-                            "👥 Подписчики — список подписчиков и запросов.\n\n" + KEYBOARD_TEXT, keyboard_for(cid))
-        return False
+                            "👥 Подписчики — список подписчиков и запросов.\n\n" + KEYBOARD_TEXT, keyboard_for(cid, subs))
+        return True
     if text.startswith("/stop"):
         if cid in subs["subscribers"]:
             info = subs["subscribers"].pop(cid)
@@ -1918,8 +1940,8 @@ def handle_message(token, msg, subs):
         say(token, cid, INTRO_TEXT, REQUEST_KEYBOARD)
         return False
     if cid in subs["subscribers"]:
-        say(token, cid, ("Вы уже получаете оповещения.\n\n" if text.startswith("/start") else "") + HELP_SUB, keyboard_for(cid))
-        return False
+        say(token, cid, ("Вы уже получаете оповещения.\n\n" if text.startswith("/start") else "") + HELP_SUB, keyboard_for(cid, subs))
+        return True
     if cid in subs["pending"]:
         say(token, cid, WAIT_TEXT, WAIT_KEYBOARD)
         return False
@@ -1959,8 +1981,8 @@ def handle_callback(token, cb, subs):
         info = subs["pending"].pop(cid)
         subs["subscribers"][cid] = {"name": info["name"], "since": datetime.now(MSK).isoformat(), "stations": [], "fuels": []}
         set_menu_button(token, cid, [], [])
-        say(token, cid, "✅ Владелец бота подтвердил доступ.", KEYBOARD)
         subs["subscribers"][cid]["kb"] = KEYBOARD_VERSION
+        say(token, cid, "✅ Владелец бота подтвердил доступ.", keyboard_for(cid, subs))
         start_onboarding(token, subs, cid)
         done(f"✅ Добавлено в подписчики: {html.escape(info['name'])}.")
         return True
@@ -2020,10 +2042,18 @@ def setup_bot(db):
     subs, changed = load_subs(), False
     people = [(owner, subs["owner"])] + [(cid, e) for cid, e in subs["subscribers"].items() if cid != owner]
     for cid, entry in people:
+        if entry.get("onboarding") or "stations" not in entry and cid != owner:
+            continue
         if entry.get("kb") != keyboard_version(cid):  # кнопки под полем ввода — один раз каждому
             try:
                 text = KEYBOARD_TEXT + ("\n👥 Подписчики — список подписчиков и запросов." if cid == owner else "")
-                say(token, cid, text, keyboard_for(cid))
+                say(token, cid, text, keyboard_for(cid, subs))
+                entry["kb"], changed = keyboard_version(cid), True
+            except Exception as e:
+                print(f"кнопки …{cid[-4:]}: {e}", file=sys.stderr)
+        elif keyboard_url_stale(subs, cid):  # выбор меняли, но не нажали «Готово» — обновим ссылку в кнопке
+            try:
+                say(token, cid, "⛽ Кнопка «Сводка» обновлена под ваш выбор.", keyboard_for(cid, subs))
                 entry["kb"], changed = keyboard_version(cid), True
             except Exception as e:
                 print(f"кнопки …{cid[-4:]}: {e}", file=sys.stderr)
