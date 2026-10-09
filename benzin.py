@@ -854,6 +854,7 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
 .est .k, .legend .k {{ display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; }}
 .st-q {{ color:var(--maybe); font-weight:800; font-size:1.1em; cursor:help; }}
 .st-qr {{ color:var(--none); font-weight:800; font-size:1.1em; cursor:help; }} .st-no {{ color:var(--none); font-weight:600; }}
+.st-yes {{ color:var(--have); font-weight:600; }}
 .card > table {{ table-layout:fixed; }}
 .card > table th:nth-child(1) {{ width:16%; }} .card > table th:nth-child(2) {{ width:14%; }}
 .card > table th:nth-child(3) {{ width:20%; }} .card > table th:nth-child(4) {{ width:20%; }}
