@@ -45,13 +45,13 @@ RUN_URL = "https://github.com/dooodoIvan/benzin/actions/workflows/collect.yml"  
 REPORT_PATH = BASE / "report.html"  # локальный файл, в git не попадает
 
 # Заправки владельца по умолчанию: шаблон адреса (как пишет канал) → короткое имя
-ALIASES = [
-    (r"бабяково.*транспортн|транспортн.*бабяково", "Бабяково"),
-    (r"ленинский проспект,\s*182(?![\dа-я])", "Ленинский 182"),
-    (r"землячки,\s*7\s*а(?![\dа-я])", "Землячки 7А"),
-    (r"новая усмань.*дорожная улица,\s*31(?![\dа-я])", "Дорожная 31"),
-    (r"новая усмань.*дорожная улица,\s*101(?![\dа-я])", "Дорожная 101"),
-    (r"ленинский проспект,\s*154\s*а(?![\dа-я])", "Ленинский 154А"),
+ALIASES = [  # шаблон адреса, короткое имя, сеть (если канал её не указал)
+    (r"бабяково.*транспортн|транспортн.*бабяково", "Бабяково", "Газпром"),
+    (r"ленинский проспект,\s*182(?![\dа-я])", "Ленинский 182", "Роснефть"),
+    (r"землячки,\s*7\s*а(?![\dа-я])", "Землячки 7А", "Роснефть"),
+    (r"новая усмань.*дорожная улица,\s*31(?![\dа-я])", "Дорожная 31", "Роснефть"),
+    (r"новая усмань.*дорожная улица,\s*101(?![\dа-я])", "Дорожная 101", "Роснефть"),
+    (r"ленинский проспект,\s*154\s*а(?![\dа-я])", "Ленинский 154А", "Татнефть"),
 ]
 MAX_STATIONS = 8  # столько цветов хорошо различимы на графиках
 CATALOG_DAYS = 30  # в списке для выбора — заправки, о которых канал писал за последние 30 дней
@@ -363,17 +363,19 @@ def load_registry(db):
     REG.clear()
     for address in seen:
         brand = max(brands[address], key=brands[address].get) if address in brands else None
-        alias = next((name for pattern, name in ALIASES if re.search(pattern, address.lower())), None)
+        alias, alias_brand = next(((n, b) for pattern, n, b in ALIASES if re.search(pattern, address.lower())), (None, None))
+        brand = brand or alias_brand
         short = short_address(address)
-        REG[station_of(address)] = {"address": address, "brand": brand, "alias": alias,
-                                    "short": alias or short, "name": f"{brand}, {short}" if brand else short}
+        REG[station_of(address)] = {"address": address, "brand": brand, "alias": alias, "short": alias or short,
+                                    "name": f"{brand}, {short}" if brand else short,
+                                    "label": f"{brand} · {alias or short}" if brand else (alias or short)}
     return REG
 
 
 def default_sids():
     """Заправки владельца по умолчанию — в порядке ALIASES (только те, о которых канал уже писал)."""
     by_alias = {s["alias"]: sid for sid, s in REG.items() if s["alias"]}
-    return [by_alias[name] for _, name in ALIASES if name in by_alias]
+    return [by_alias[name] for _, name, _ in ALIASES if name in by_alias]
 
 
 def clean_selection(sids):
@@ -454,7 +456,7 @@ def notify_text(db, sids=None, wanted=None):
     sids, wanted = sids or default_sids(), wanted or DEFAULT_FUELS
     groups = {"have": [], "stale": [], "term": [], "none": [], "unknown": []}
     for sid, fuels, (cls, label, _, when) in ordered_stations(db, now, sids, wanted):
-        short = REG[sid]["short"]
+        short = REG[sid]["label"]
         groups[cls].append(f"{short} ({when:%H:%M})" if when else short)
     heads = {"have": "✅ Есть", "stale": "🟡 Было давно", "term": "❓ Терминал", "none": "❌ Нет", "unknown": "⚪ Нет информации"}
     lines = [f"{heads[c]}: " + ", ".join(v) for c, v in groups.items() if v]
@@ -604,7 +606,7 @@ def cmd_telegram(args):
                     text=alert_text(db, items, now, fuels), reply_markup=page_button(now, sids, fuels))
         except Exception as e:  # например, подписчик заблокировал бота
             print(f"не удалось отправить …{cid[-4:]}: {e}", file=sys.stderr)
-    print(("оповещение: " + ", ".join(f"{REG[s]['short']} {fuel_name(f)}" for s, f in sorted(appeared)))
+    print(("оповещение: " + ", ".join(f"{REG[s]['label']} {fuel_name(f)}" for s, f in sorted(appeared)))
           if appeared else "новых появлений нет", file=sys.stderr)
     TG_ALERTS_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1))
 
@@ -724,13 +726,67 @@ def fmt_hours(td):
     return f"{h:.0f} ч" if h >= 2 else f"{h * 60:.0f} мин"
 
 
+STATUS_CAP = timedelta(hours=12)  # дольше без новых отчётов — «нет информации»
+STATUS_RANK = {"have": 0, "stale": 1, "term": 2, "none": 3}
+STATUS_RU = {"have": "есть", "stale": "давно не подтверждали", "term": "только терминал", "none": "нет", "unknown": "нет информации"}
+
+
+def status_timeline(db, sid, now, fuels):
+    """Состояние заправки во времени, как в сводке → [(начало, конец, статус)]:
+    have — «есть» подтверждено не больше 2 ч назад; stale — «есть» подтверждали раньше, а «нет» не сообщали;
+    term — только оплаты по терминалу; none — нет. Без отчётов дольше STATUS_CAP — нет информации (пропуск)."""
+    since = now - timedelta(days=STATS_DAYS)
+    per_fuel = []
+    for f in fuels:
+        series, segs = station_series(db, sid, f, since), []
+        for i, (t, a, k) in enumerate(series):
+            nxt = series[i + 1][0] if i + 1 < len(series) else now
+            end = min(nxt, t + STATUS_CAP, now)
+            if end <= t:
+                continue
+            if a and k != "signal":
+                segs.append((t, min(end, t + CONFIRM_FRESH), "have"))
+                if end > t + CONFIRM_FRESH:
+                    segs.append((t + CONFIRM_FRESH, end, "stale"))
+            else:
+                segs.append((t, end, "term" if a else "none"))
+        per_fuel.append(segs)
+    bounds = sorted({t for segs in per_fuel for a, b, _ in segs for t in (a, b)})
+    out = []
+    for b0, b1 in zip(bounds, bounds[1:]):
+        mid = b0 + (b1 - b0) / 2
+        cover = [st for segs in per_fuel for a, b, st in segs if a <= mid < b]
+        if not cover:
+            continue
+        st = min(cover, key=STATUS_RANK.get)  # лучшее из состояний по выбранным маркам
+        if out and out[-1][1] == b0 and out[-1][2] == st:
+            out[-1] = (out[-1][0], b1, st)
+        else:
+            out.append((b0, b1, st))
+    return out
+
+
+def hourly_status(tl):
+    """→ по часам суток: {статус: минут}."""
+    acc = [dict() for _ in range(24)]
+    for start, end, st in tl:
+        t = start
+        while t < end:
+            nxt = min(end, t.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+            acc[t.hour][st] = acc[t.hour].get(st, 0) + (nxt - t).total_seconds() / 60
+            t = nxt
+    return acc
+
+
 def station_stats(db, sid, now, fuels=None):
-    timeline = station_timeline(db, sid, now, fuels or DEFAULT_FUELS)
+    fuels = fuels or DEFAULT_FUELS
+    timeline = station_timeline(db, sid, now, fuels)
     if not timeline:
         return None
     arrivals, runouts, durations = events(timeline)
+    tl = status_timeline(db, sid, now, fuels)
     return {"timeline": timeline, "arrivals": arrivals, "runouts": runouts, "durations": durations,
-            "hourly": hourly_share(timeline), "since": timeline[0][0]}
+            "hourly": hourly_share(timeline), "since": timeline[0][0], "status": tl, "hourly_status": hourly_status(tl)}
 
 
 def median_duration(durations):
@@ -768,8 +824,23 @@ def tip(text):
     return f'data-tip="{html.escape(text, quote=True)}" tabindex="0"'
 
 
-def row_attrs(sid, color, visible):
-    return f'data-sid="{sid}" style="--c:var(--s{color})"' + ("" if visible else ' class="nosel"')
+def row_attrs(sid, visible):
+    return f'data-sid="{sid}"' + ("" if visible else ' class="nosel"')
+
+
+def svg_label(sid, x, y):
+    """Подпись строки графика в две строки: сеть (мелко) и адрес."""
+    brand = REG[sid]["brand"]
+    addr = html.escape(chart_label(sid))
+    if not brand:
+        return f'<text x="{x}" y="{y + 4:.1f}" class="tick label" text-anchor="end">{addr}</text>'
+    return (f'<text x="{x}" y="{y - 1:.1f}" class="tick brand" text-anchor="end">{html.escape(brand)}</text>'
+            f'<text x="{x}" y="{y + 9:.1f}" class="tick label" text-anchor="end">{addr}</text>')
+
+
+STATUS_LEGEND = ('<div class="legend"><span><i class="k s-have"></i>есть</span>'
+                 '<span><i class="k s-stale"></i>давно не подтверждали</span><span><i class="k s-term"></i>только терминал</span>'
+                 '<span><i class="k s-none"></i>нет</span><span><i class="k s-unknown"></i>нет информации</span></div>')
 
 
 def first_hour(stats, default=7):
@@ -778,38 +849,38 @@ def first_hour(stats, default=7):
     return min(hours + [default])
 
 
-def heat_rows(stats, colors, visible, h0):
-    """Тепловая карта: строка на заправку, клетка на час. Чем ярче клетка, тем чаще в этот час бензин был."""
+def heat_rows(stats, visible, h0):
+    """Тепловая карта: строка на заправку, клетка на час. Цвет — что чаще всего было в этот час."""
     n = 24 - h0
-    x0, x1, row = 112, W - 6, 22
+    x0, x1, row = 112, W - 6, 26
     cw = (x1 - x0) / n
     out = []
     for sid, st in stats.items():
-        short = chart_label(sid)
+        label = REG[sid]["label"]
         cells = []
         for h in range(h0, 24):
             x = x0 + cw * (h - h0)
-            have, none = st["hourly"][h] if st else (0, 0)
-            label = f"{short} · {h:02d}:00–{(h + 1) % 24:02d}:00 · "
-            if have + none < 1:
-                cells.append(f'<rect x="{x + 1:.1f}" y="1" width="{cw - 2:.1f}" height="{row - 2}" rx="3" class="track" '
-                             f'{tip(label + "нет данных")}/>')
-            else:
-                share = have / (have + none)
-                cells.append(f'<rect x="{x + 1:.1f}" y="1" width="{cw - 2:.1f}" height="{row - 2}" rx="3" class="cell" '
-                             f'style="fill-opacity:{0.12 + 0.88 * share:.2f}" {tip(label + f"бензин был {share:.0%} времени")}/>')
-        out.append(f'<svg viewBox="0 0 {W} {row}" class="chart" {row_attrs(sid, colors[sid], visible[sid])}>'
-                   f'<text x="{x0 - 6}" y="{row / 2 + 4:.1f}" class="tick label" text-anchor="end">{html.escape(short)}</text>'
-                   + "".join(cells) + "</svg>")
+            mins = st["hourly_status"][h] if st else {}
+            total = sum(mins.values())
+            text = f"{label} · {h:02d}:00–{(h + 1) % 24:02d}:00 · "
+            if total < 1:
+                cells.append(f'<rect x="{x + 1:.1f}" y="2" width="{cw - 2:.1f}" height="{row - 4}" rx="3" class="s-unknown" '
+                             f'{tip(text + "нет информации")}/>')
+                continue
+            top = max(mins, key=mins.get)
+            parts = ", ".join(f"{STATUS_RU[k]} {mins[k] / total:.0%}" for k in STATUS_RANK if mins.get(k))
+            cells.append(f'<rect x="{x + 1:.1f}" y="2" width="{cw - 2:.1f}" height="{row - 4}" rx="3" class="cell s-{top}" '
+                         f'style="fill-opacity:{0.45 + 0.55 * mins[top] / total:.2f}" {tip(text + parts)}/>')
+        out.append(f'<svg viewBox="0 0 {W} {row}" class="chart" {row_attrs(sid, visible[sid])}>'
+                   + svg_label(sid, x0 - 6, row / 2) + "".join(cells) + "</svg>")
     axis = "".join(f'<text x="{x0 + cw * (h - h0):.1f}" y="13" class="tick" text-anchor="middle">{h}</text>'
                    for h in range(h0, 25, 2 if n <= 14 else 3))
     return f'<div class="rows">{"".join(out)}</div><svg viewBox="0 0 {W} 18" class="chart">{axis}</svg>'
 
 
-def week_rows(stats, colors, visible, now, h0):
-    """Последние 7 дней (только часы сбора): строка на заправку.
-    Цвет заправки — есть, бледный — возможно (терминалы), серый — нет, пусто — нет данных."""
-    x0, x1, row, gap = 112, W - 6, 14, 6
+def week_rows(stats, visible, now, h0):
+    """Последние 7 дней (только часы сбора): строка на заправку, цвет — состояние."""
+    x0, x1, row, gap = 112, W - 6, 16, 10
     start = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
     dayw = (x1 - x0) / 7
 
@@ -824,26 +895,24 @@ def week_rows(stats, colors, visible, now, h0):
                    for d in range(8))
     out = []
     for sid, st in stats.items():
-        short = chart_label(sid)
+        label = REG[sid]["label"]
         segs = []
-        for s, e, a, weak in (st["timeline"] if st else []):
-            s, e = max(s, start), min(e, now)
-            if e <= s:
+        for s_, e, status in (st["status"] if st else []):
+            s_, e = max(s_, start), min(e, now)
+            if e <= s_:
                 continue
-            xs_, xe = xt(s), xt(e)
+            xs_, xe = xt(s_), xt(e)
             if xe - xs_ < 0.3:
                 continue  # отрезок целиком в часах без сбора
-            cls = ("on" + (" weak" if weak else "")) if a else "off"
-            word = ("возможно есть (терминалы)" if weak else "есть") if a else ("возможно нет (терминалы)" if weak else "нет")
             segs.append(f'<rect x="{xs_ + 0.5:.1f}" y="{gap / 2}" width="{max(xe - xs_ - 1, 1.2):.1f}" height="{row}" rx="2" '
-                        f'class="seg {cls}" {tip(f"{short} · {s:%d.%m %H:%M}–{e:%H:%M} · {word}")}/>')
-        out.append(f'<svg viewBox="0 0 {W} {row + gap}" class="chart" {row_attrs(sid, colors[sid], visible[sid])}>{grid}'
-                   f'<text x="{x0 - 6}" y="{gap / 2 + 11}" class="tick label" text-anchor="end">{html.escape(short)}</text>'
-                   f'<rect x="{x0}" y="{gap / 2}" width="{x1 - x0}" height="{row}" rx="3" class="track"/>' + "".join(segs) + "</svg>")
+                        f'class="seg s-{status}" {tip(f"{label} · {s_:%d.%m %H:%M}–{e:%H:%M} · {STATUS_RU[status]}")}/>')
+        out.append(f'<svg viewBox="0 0 {W} {row + gap}" class="chart" {row_attrs(sid, visible[sid])}>{grid}'
+                   + svg_label(sid, x0 - 6, gap / 2 + row / 2) +
+                   f'<rect x="{x0}" y="{gap / 2}" width="{x1 - x0}" height="{row}" rx="3" class="s-unknown"/>' + "".join(segs) + "</svg>")
     return f'<svg viewBox="0 0 {W} 16" class="chart">{head}</svg><div class="rows">{"".join(out)}</div>'
 
 
-def events_list(stats, colors, visible, now, limit=40):
+def events_list(stats, visible, now, limit=40):
     """Последние случаи, когда бензин появлялся и заканчивался, — простым списком (скрипт оставит нужные)."""
     items = []
     for sid, st in stats.items():
@@ -852,8 +921,8 @@ def events_list(stats, colors, visible, now, limit=40):
             items += [(t, sid, "закончился") for t in st["runouts"]]
     items = sorted((e for e in items if now - e[0] <= timedelta(days=7)), reverse=True)[:limit]
     lis = "".join(
-        f'<li {row_attrs(sid, colors[sid], visible[sid])}><b>{t:%d.%m %H:%M}</b> <i class="k sw"></i>'
-        f'{html.escape(REG[sid]["short"])} — <span class="{"ev-on" if what == "появился" else "ev-off"}">бензин {what}</span></li>'
+        f'<li {row_attrs(sid, visible[sid])}><b>{t:%d.%m %H:%M}</b> {html.escape(REG[sid]["label"])} — '
+        f'<span class="{"ev-on" if what == "появился" else "ev-off"}">бензин {what}</span></li>'
         for t, sid, what in items)
     return (f'<ul class="events">{lis}</ul><p class="muted ev-empty" hidden>Пока не было ни одного случая, '
             f'когда бензин появился или закончился: нужно больше данных.</p>')
@@ -861,12 +930,9 @@ def events_list(stats, colors, visible, now, limit=40):
 
 def stats_section(db, now, sids, shown, fuels):
     stats = {sid: station_stats(db, sid, now, fuels) for sid in sids}
-    colors = {sid: (shown.index(sid) if sid in shown else i) % MAX_STATIONS + 1 for i, sid in enumerate(sids)}
     visible = {sid: sid in shown for sid in sids}
     h0 = first_hour(stats)
     esc = html.escape
-    legend = "".join(f'<span {row_attrs(sid, colors[sid], visible[sid])}><i class="k sw"></i>{esc(REG[sid]["short"])}</span>'
-                     for sid in sids)
     since = min((st["since"] for st in stats.values() if st), default=now)
     note = ""
     if now - since < timedelta(days=7):
@@ -882,8 +948,8 @@ def stats_section(db, now, sids, shown, fuels):
 
     rows, hour_rows = [], []
     for sid in sids:
-        st, attrs = stats[sid], row_attrs(sid, colors[sid], visible[sid])
-        name_cell = f'<td><i class="k sw"></i>{esc(REG[sid]["short"])}</td>'
+        st, attrs = stats[sid], row_attrs(sid, visible[sid])
+        name_cell = f'<td>{esc(REG[sid]["label"])}</td>'
         if not st:
             rows.append(f'<tr {attrs}>{name_cell}<td colspan="3" class="muted">данных пока нет</td></tr>')
         else:
@@ -894,17 +960,17 @@ def stats_section(db, now, sids, shown, fuels):
             for h in range(h0, 24)) + "</tr>")
     return f"""
 <section class="card stats">
-  <p class="note">«Есть» — есть {fuels_or(fuels)}.</p>
-  <div class="legend stations rows">{legend}</div>{note}
+  <p class="note">«Есть» — есть {fuels_or(fuels)}.</p>{note}
   <table class="tbl est"><thead><tr><th>Заправка</th><th>Привозят</th><th>Кончается</th><th>Держится</th></tr></thead>
   <tbody class="rows">{"".join(rows)}</tbody></table>
-  <h4>Когда обычно есть бензин</h4>
-  <div class="legend"><span>чем ярче клетка, тем чаще в этот час бензин был</span><span><i class="k track"></i>нет данных</span></div>
-  {heat_rows(stats, colors, visible, h0)}
-  <h4>Последние появления и окончания</h4>{events_list(stats, colors, visible, now)}
+  <h4>Как обычно по часам</h4>
+  <p class="note">Цвет клетки — что чаще всего было в этот час (чем насыщеннее, тем чаще). Нажмите на клетку — подробности.</p>
+  {STATUS_LEGEND}
+  {heat_rows(stats, visible, h0)}
+  <h4>Последние появления и окончания</h4>{events_list(stats, visible, now)}
   <h4>Последние 7 дней, {h0}:00–24:00</h4>
-  <div class="legend"><span><i class="k sample"></i>есть (цвет заправки)</span><span><i class="k sample weak"></i>возможно (терминалы)</span><span><i class="k off"></i>нет</span><span><i class="k track"></i>нет данных</span></div>
-  {week_rows(stats, colors, visible, now, h0)}
+  {STATUS_LEGEND}
+  {week_rows(stats, visible, now, h0)}
   <details><summary>Таблица по часам: доля времени, когда бензин есть</summary>
   <div class="scroll"><table class="tbl hours"><thead><tr><th>Заправка</th>{"".join(f"<th>{h}</th>" for h in range(h0, 24))}</tr></thead>
   <tbody class="rows">{"".join(hour_rows)}</tbody></table></div></details>
@@ -969,9 +1035,9 @@ def write_report(db, path=None, sids=None, combos=None):
 <style>
 :root {{ color-scheme: light; --bg:#f9f9f7; --card:#fcfcfb; --text:#0b0b0b; --text2:#52514e; --muted:#898781;
   --line:#e1e0d9; --axis:#c3c2b7; --yes:#2a78d6; --track:#efeee9;
-  --have:#0ca30c; --maybe:#b7791f; --none:#d03b3b; --unknown:#898781; --off:#c3c2b7; {s_light} }}
+  --have:#0ca30c; --maybe:#b7791f; --none:#d03b3b; --unknown:#898781; --off:#c3c2b7; --nodata:#dddcd5; {s_light} }}
 @media (prefers-color-scheme: dark) {{ :root {{ color-scheme: dark; --bg:#0d0d0d; --card:#1a1a19; --text:#fff; --text2:#c3c2b7;
-  --line:#2c2c2a; --axis:#383835; --yes:#3987e5; --track:#262624; --off:#55544f; {s_dark} }} }}
+  --line:#2c2c2a; --axis:#383835; --yes:#3987e5; --track:#262624; --off:#55544f; --nodata:#3a3a37; {s_dark} }} }}
 body {{ margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }}
 main {{ max-width:780px; margin:0 auto; padding:24px 16px 48px; }}
 h1 {{ font-size:22px; margin:0 0 4px; }} h2 {{ font-size:17px; margin:0; }}
@@ -1008,8 +1074,11 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
 .chart .grid {{ stroke:var(--line); stroke-width:1; }}
 .chart .tick {{ fill:var(--muted); font-size:11px; font-variant-numeric: tabular-nums; }}
 .chart .label {{ fill:var(--text2); font-size:11.5px; }}
-.chart .track {{ fill:var(--track); }} .chart .cell, .chart .on {{ fill:var(--c); }} .chart .off {{ fill:var(--off); }}
-.chart .weak {{ opacity:.45; }}
+.chart .track {{ fill:var(--track); }}
+.s-have {{ fill:#0ca30c; background:#0ca30c; }} .s-stale {{ fill:#fab219; background:#fab219; }}
+.s-term {{ fill:#ec835a; background:#ec835a; }} .s-none {{ fill:#d03b3b; background:#d03b3b; }}
+.s-unknown {{ fill:var(--nodata); background:var(--nodata); }}
+.chart .brand {{ fill:var(--muted); font-size:10px; }}
 .chart .cell:hover, .chart .cell:focus, .chart .seg:hover, .chart .seg:focus {{ stroke:var(--text); stroke-width:1.5; outline:none; }}
 .events {{ list-style:none; padding:0; margin:6px 0 0; }} .events li {{ padding:4px 0; border-bottom:1px solid var(--line); }}
 .events .k {{ margin:0 6px 0 8px; width:10px; height:10px; }}
@@ -1301,7 +1370,7 @@ def stations_view(sids, view):
 
     def toggle_btn(sid, back):
         mark = "✅" if sid in sids else "▫️"
-        return [{"text": f"{mark} {REG[sid]['short']}"[:60], "callback_data": f"st:t:{sid}:{back}"}]
+        return [{"text": f"{mark} {REG[sid]['label']}"[:60], "callback_data": f"st:t:{sid}:{back}"}]
 
     if view == "home":
         rows, row = [], []
@@ -1326,7 +1395,7 @@ def stations_view(sids, view):
     brand = next((b for b, k, _ in brands() if k == key), None)
     if brand is None:
         return stations_view(sids, "home")
-    in_brand = sorted((s for s in REG if brand_of(s) == brand), key=lambda s: REG[s]["short"])
+    in_brand = sorted((s for s in REG if brand_of(s) == brand), key=lambda s: REG[s]["label"])
     pages = max(1, -(-len(in_brand) // PAGE_SIZE))
     page = min(page, pages - 1)
     rows = [toggle_btn(s, f"{key}.{page}") for s in in_brand[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]]
