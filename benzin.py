@@ -1313,6 +1313,22 @@ BTN_STATIONS, BTN_FUELS, BTN_REFRESH = "📍 Заправки", "🛢 Марки
 KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}]],
             "resize_keyboard": True, "is_persistent": True}
 KEYBOARD_VERSION = 2  # увеличить, если поменяются кнопки — тогда бот пришлёт их всем заново
+BTN_SUBS, BTN_WAIT = "👥 Подписчики", "⏳ Ожидаю подтверждения"
+OWNER_KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}, {"text": BTN_SUBS}]],
+                  "resize_keyboard": True, "is_persistent": True}
+OWNER_KEYBOARD_VERSION = 3
+WAIT_KEYBOARD = {"keyboard": [[{"text": BTN_WAIT}]], "resize_keyboard": True, "is_persistent": True}
+WAIT_TEXT = ("⏳ <b>Ваш запрос ожидает подтверждения.</b>\n\n"
+             "Я отправил его владельцу бота. Как только он подтвердит доступ, я сразу напишу — "
+             "и вы сможете выбрать марки топлива и заправки, о которых хотите получать информацию.")
+
+
+def keyboard_for(cid):
+    return OWNER_KEYBOARD if cid == owner_id() else KEYBOARD
+
+
+def keyboard_version(cid):
+    return OWNER_KEYBOARD_VERSION if cid == owner_id() else KEYBOARD_VERSION
 KEYBOARD_TEXT = ("Внизу — кнопки:\n📍 Заправки — выбрать заправки\n🛢 Марки — выбрать марки топлива\n"
                  "🔄 Обновить — собрать свежие данные прямо сейчас\n"
                  "⛽ Сводка (слева) — сводка и статистика по вашим заправкам.")
@@ -1349,11 +1365,11 @@ def start_onboarding(token, subs, cid):
 def finish_onboarding(token, subs, cid):
     entry = user_entry(subs, cid)
     entry.pop("onboarding", None)
-    entry["kb"] = KEYBOARD_VERSION
+    entry["kb"] = keyboard_version(cid)
     sids, fuels = selection(subs, cid), fuel_selection(subs, cid)
     say(token, cid, f"🎉 <b>Всё готово!</b>\n\nБуду писать, когда на ваших заправках появится {fuels_or(fuels)}.\n"
                     "Сводка и статистика — кнопка «⛽ Сводка» слева от поля ввода.\n"
-                    "Изменить выбор — кнопки «📍 Заправки» и «🛢 Марки» внизу.", KEYBOARD)
+                    "Изменить выбор — кнопки «📍 Заправки» и «🛢 Марки» внизу.", keyboard_for(cid))
 
 
 HELP_SUB = ("Бот присылает оповещение, когда на ваших заправках появляется нужное вам топливо.\n"
@@ -1539,7 +1555,7 @@ def handle_message(token, msg, subs):
         return False
     cid, text = str(chat["id"]), (msg.get("text") or "").strip()
     owner = owner_id()
-    text = {BTN_STATIONS: "/stations", BTN_FUELS: "/fuels", BTN_REFRESH: "/refresh"}.get(text, text)
+    text = {BTN_STATIONS: "/stations", BTN_FUELS: "/fuels", BTN_REFRESH: "/refresh", BTN_SUBS: "/list"}.get(text, text)
     if text.startswith("/refresh") and (cid == owner or cid in subs["subscribers"]):
         if time.time() - REFRESH["last"] < REFRESH_MIN:
             say(token, cid, f"Данные обновлялись меньше минуты назад — сводка свежая.",
@@ -1565,15 +1581,17 @@ def handle_message(token, msg, subs):
                 say(token, cid, f"🔔 Ждёт подтверждения: <b>{html.escape(info['name'])}</b> (запрос {info['at'][:16].replace('T', ' ')})",
                     {"inline_keyboard": [[{"text": "✅ Добавить", "callback_data": f"sub:ok:{pid}"},
                                           {"text": "❌ Отклонить", "callback_data": f"sub:no:{pid}"}]]})
-            if not subs["subscribers"]:
-                say(token, cid, "Подтверждённых подписчиков пока нет. Чтобы подписаться, человек нажимает «Запустить» у бота, а вы подтверждаете.")
+            if not subs["pending"] and not subs["subscribers"]:
+                say(token, cid, "Подписчиков и запросов пока нет. Чтобы подписаться, человек нажимает «Запустить» у бота, а вы подтверждаете.")
+            elif subs["subscribers"]:
+                say(token, cid, f"👥 <b>Подписчики: {len(subs['subscribers'])}</b>")
             for sid, info in subs["subscribers"].items():
-                n = len(clean_selection(info.get("stations")))
-                say(token, cid, f"👤 {html.escape(info['name'])}, с {info['since'][:10]}, заправок: {n or 'по умолчанию'}",
+                n, fs = len(clean_selection(info.get("stations"))), fuels_title(info.get("fuels") or []) or "не выбраны"
+                say(token, cid, f"👤 {html.escape(info['name'])}, с {info['since'][:10]}\n   заправок: {n}, марки: {fs}",
                     {"inline_keyboard": [[{"text": "❌ Удалить", "callback_data": f"sub:del:{sid}"}]]})
         else:
             say(token, cid, "Вы владелец бота: оповещения приходят вам и подтверждённым подписчикам — каждому по его заправкам и маркам.\n"
-                            "/list — список подписчиков.\n\n" + KEYBOARD_TEXT, KEYBOARD)
+                            "👥 Подписчики — список подписчиков и запросов.\n\n" + KEYBOARD_TEXT, keyboard_for(cid))
         return False
     if text.startswith("/stop"):
         if cid in subs["subscribers"]:
@@ -1584,10 +1602,10 @@ def handle_message(token, msg, subs):
         say(token, cid, "Вы и так не подписаны. /start — попросить доступ.")
         return False
     if cid in subs["subscribers"]:
-        say(token, cid, ("Вы уже получаете оповещения.\n\n" if text.startswith("/start") else "") + HELP_SUB, KEYBOARD)
+        say(token, cid, ("Вы уже получаете оповещения.\n\n" if text.startswith("/start") else "") + HELP_SUB, keyboard_for(cid))
         return False
     if cid in subs["pending"]:
-        say(token, cid, "Запрос уже отправлен владельцу бота — ждём подтверждения.")
+        say(token, cid, WAIT_TEXT, WAIT_KEYBOARD)
         return False
     if text.startswith("/start"):
         name = user_name(user)
@@ -1595,8 +1613,7 @@ def handle_message(token, msg, subs):
         say(token, owner, f"🔔 <b>{html.escape(name)}</b> хочет получать оповещения о появлении бензина.",
             {"inline_keyboard": [[{"text": "✅ Добавить", "callback_data": f"sub:ok:{cid}"},
                                   {"text": "❌ Отклонить", "callback_data": f"sub:no:{cid}"}]]})
-        say(token, cid, "Запрос отправлен владельцу бота. Как только он подтвердит, вы сможете выбрать заправки и марки топлива "
-                        "и получать оповещения, когда на ваших заправках появляется нужное топливо.")
+        say(token, cid, WAIT_TEXT, WAIT_KEYBOARD)
         return True
     say(token, cid, "Это бот оповещений о бензине в Воронеже. Отправьте /start, чтобы попросить доступ.")
     return False
@@ -1622,13 +1639,14 @@ def handle_callback(token, cb, subs):
         info = subs["pending"].pop(cid)
         subs["subscribers"][cid] = {"name": info["name"], "since": datetime.now(MSK).isoformat(), "stations": [], "fuels": []}
         set_menu_button(token, cid, [], [])
-        say(token, cid, "✅ Владелец бота подтвердил доступ.")
+        say(token, cid, "✅ Владелец бота подтвердил доступ.", KEYBOARD)
+        subs["subscribers"][cid]["kb"] = KEYBOARD_VERSION
         start_onboarding(token, subs, cid)
         done(f"✅ Добавлено в подписчики: {html.escape(info['name'])}.")
         return True
     if action == "no" and cid in subs["pending"]:
         info = subs["pending"].pop(cid)
-        say(token, cid, "Владелец бота отклонил запрос на оповещения.")
+        say(token, cid, "Владелец бота отклонил запрос на оповещения.", {"remove_keyboard": True})
         done(f"❌ Запрос от {html.escape(info['name'])} отклонён.")
         return True
     if action == "del" and cid in subs["subscribers"]:
@@ -1674,10 +1692,11 @@ def setup_bot(db):
     subs, changed = load_subs(), False
     people = [(owner, subs["owner"])] + [(cid, e) for cid, e in subs["subscribers"].items() if cid != owner]
     for cid, entry in people:
-        if entry.get("kb") != KEYBOARD_VERSION:  # кнопки под полем ввода — один раз каждому
+        if entry.get("kb") != keyboard_version(cid):  # кнопки под полем ввода — один раз каждому
             try:
-                say(token, cid, KEYBOARD_TEXT, KEYBOARD)
-                entry["kb"], changed = KEYBOARD_VERSION, True
+                text = KEYBOARD_TEXT + ("\n👥 Подписчики — список подписчиков и запросов." if cid == owner else "")
+                say(token, cid, text, keyboard_for(cid))
+                entry["kb"], changed = keyboard_version(cid), True
             except Exception as e:
                 print(f"кнопки …{cid[-4:]}: {e}", file=sys.stderr)
     if changed:
