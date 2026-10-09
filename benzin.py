@@ -1324,7 +1324,7 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 </style></head><body data-updated="{now.isoformat()}"><main>
 <h1>Обновлено <b>{now:%H:%M}</b>, {now:%d.%m.%Y} <span class="ago" id="ago"></span></h1>
 <div class="topbar">
-  <div class="muted">Сводка по <b id="ftitle">{fuels_title(DEFAULT_FUELS)}</b>. Сбор с 7:00 до 24:00 каждые 10 минут. Ночью данные можно обновить только вручную.</div>
+  <div class="muted">Сводка по <b id="ftitle">{fuels_title(DEFAULT_FUELS)}</b>. Сбор с 7:00 до 24:00 каждые 10 минут. Ночью данные не обновляются.</div>
   <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg> Обновить сейчас</a>
   <div class="muted nosel" id="refresh-bot">Обновить данные — кнопка «🔄 Обновить» в боте.</div>
 </div>
@@ -1396,17 +1396,12 @@ document.querySelectorAll('.fblock:not(.nosel) .events, .fblock .events').forEac
   shown.slice(12).forEach(li => li.classList.add('nosel'));
   if (!shown.length) ul.nextElementSibling.hidden = false;
 }});
-// «Обновить сейчас»: у владельца — запуск сбора на GitHub; у остальных в Telegram кнопка есть только ночью (0–7 МСК)
-// и отправляет запрос боту, днём — подсказка про кнопку «🔄 Обновить» в боте
+// «Обновить сейчас» (запуск сбора на GitHub) доступен только владельцу; в Telegram у остальных — подсказка про кнопку в боте
 const inTg = !!(window.Telegram && Telegram.WebApp && Telegram.WebApp.platform && Telegram.WebApp.platform !== 'unknown');
-const viaBot = inTg && params.get('own') !== '1';
-const mskHour = () => +new Date().toLocaleString('en-US', {{timeZone: 'Europe/Moscow', hour: 'numeric', hourCycle: 'h23'}});
-function placeRefresh() {{
-  const night = mskHour() < {WORK_START};
-  document.getElementById('refresh').classList.toggle('nosel', viaBot && !night);
-  document.getElementById('refresh-bot').classList.toggle('nosel', !viaBot || night);
+if (inTg && params.get('own') !== '1') {{
+  document.getElementById('refresh').classList.add('nosel');
+  document.getElementById('refresh-bot').classList.remove('nosel');
 }}
-placeRefresh(); setInterval(placeRefresh, 60000);
 // «N мин назад» и автообновление, когда сервер опубликует более свежую сводку
 const updated = new Date(document.body.dataset.updated);
 function tickAgo() {{ const m = Math.round((Date.now() - updated) / 60000);
@@ -1437,15 +1432,8 @@ async function checkFresh() {{
 setInterval(checkFresh, 30000);
 // в Telegram ссылку открываем через Telegram — тогда она откроется в приложении GitHub или браузере
 document.getElementById('refresh').addEventListener('click', e => {{
-  const tg = window.Telegram && Telegram.WebApp;
-  if (viaBot) {{
-    e.preventDefault();
-    // открыто большой кнопкой «⛽ Сводка» — запрос уходит боту (окно закроется, бот ответит, когда данные обновятся)
-    if (!tg.initData) {{ tg.sendData('refresh'); return; }}
-    document.getElementById('refresh-bot').classList.remove('nosel');  // открыто из сообщения — подсказка про кнопку в боте
-    return;
-  }}
   document.getElementById('hint').hidden = false;
+  const tg = window.Telegram && Telegram.WebApp;
   if (inTg) {{ e.preventDefault(); tg.openLink(e.currentTarget.href); }}
 }});
 if (inTg) {{
@@ -1596,8 +1584,6 @@ def user_name(user):
 
 def say(token, chat_id, text, markup=None):
     params = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": "true"}
-    if datetime.now(MSK).hour < WORK_START:  # ночью — без звука
-        params["disable_notification"] = "true"
     if markup:
         params["reply_markup"] = json.dumps(markup)
     return tg_call(token, "sendMessage", **params)
@@ -1751,7 +1737,7 @@ WELCOME = (
     "📍 <b>Заправки</b> и 🛢 <b>Марки</b> — кнопки под полем ввода: можно выбрать до 10 заправок и нужные марки.\n"
     "🔄 <b>Обновить</b> — собрать свежие данные прямо сейчас.\n"
     "🔕 <b>Пауза</b> — временно не присылать оповещения (на час, до утра или пока не включите).\n\n"
-    "Данные обновляются сами с 7:00 до 24:00 каждые 10 минут, ночью — только по кнопке «🔄 Обновить».\n\n"
+    "Данные обновляются сами с 7:00 до 24:00 каждые 10 минут.\n\n"
     "<b>Шаг 1 из 2.</b> Выберите марки топлива, о которых хотите получать информацию, и нажмите «Далее»:")
 STEP2 = ("<b>Шаг 2 из 2.</b> Выберите заправки (до 10), о которых хотите получать информацию.\n"
          "Сначала выберите сеть, затем отметьте нужные заправки и нажмите «Готово»:")
@@ -1961,8 +1947,6 @@ def handle_message(token, msg, subs):
     if chat.get("type") != "private":
         return False
     cid, text = str(chat["id"]), (msg.get("text") or "").strip()
-    if (msg.get("web_app_data") or {}).get("data") == "refresh":
-        text = "/refresh"
     owner = owner_id()
     text = {BTN_STATIONS: "/stations", BTN_FUELS: "/fuels", BTN_REFRESH: "/refresh", BTN_SUBS: "/list",
             BTN_PAUSE: "/pause"}.get(text, text)
@@ -2416,8 +2400,16 @@ def cmd_worker(args):
     deadline = start + timedelta(minutes=args.max_minutes)
     ws = start.replace(hour=WORK_START, minute=0, second=0, microsecond=0)
     we = ws + timedelta(hours=WORK_END - WORK_START)
+    if we <= start + timedelta(minutes=355):  # до конца дня успеваем в одну задачу (предел GitHub — 360 мин)
+        deadline = max(deadline, we)
     print(f"запуск: {args.reason}, {start:%d.%m %H:%M}", file=sys.stderr, flush=True)
-    # сервер работает круглосуточно: с 7 до 24 — сбор по расписанию, ночью — только по кнопке «Обновить»
+
+    if start >= we or start < ws - timedelta(hours=2):
+        # ночью и рано утром сбора по расписанию нет; по кнопке — один сбор
+        if args.reason == "manual":
+            work_once()
+        return
+
     try:
         setup_bot(open_db())
     except Exception as e:
@@ -2426,8 +2418,8 @@ def cmd_worker(args):
         check_gap_on_start(start, ws)
     except Exception as e:
         print(f"проверка перерыва: {e}", file=sys.stderr)
-    slots = [s for s in day_slots(ws) + day_slots(ws + timedelta(days=1)) if s > start]
-    do_now = args.reason == "manual" or ws <= start < we  # смена началась днём или нажали кнопку — собираем сразу
+    slots = [s for s in day_slots(ws) if s > start]
+    do_now = args.reason == "manual" or start >= ws  # опоздали к началу или нажали кнопку — собираем сразу
     last_queue_check, last_version_check = 0.0, time.time()
     RUNNING_CODE["version"] = code_version("HEAD")
     while True:
@@ -2439,9 +2431,12 @@ def cmd_worker(args):
                 save_and_push()
                 if dispatch_successor():
                     return  # новая смена уже в очереди и стартует с новой версией сразу после этой
-        if now >= deadline:
+        if now >= we or now >= deadline:
             if UNPUSHED["since"]:
                 save_and_push()
+            if now >= we:
+                print("рабочий день закончился", file=sys.stderr)
+                return
             # 6-часовой предел GitHub: запускаем продолжение и завершаемся
             if not dispatch_successor():
                 notify_owner("⚠️ Не удалось запустить следующую смену сервера. Попробует «будильник» GitHub в течение нескольких минут.")
