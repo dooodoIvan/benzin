@@ -78,7 +78,7 @@
   "state": "none"
  },
  "a9ae0c|92": {
-  "state": "stale"
+  "state": "have"
  },
  "e3a599|92": {
   "state": "term"
@@ -165,5 +165,8 @@
  },
  "d0dbe7|98": {
   "state": "unknown"
+ },
+ "8fcece|92": {
+  "state": "term"
  }
 }
