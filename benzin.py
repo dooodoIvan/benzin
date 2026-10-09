@@ -40,6 +40,7 @@ CHANNEL = "voronezh_benzin"
 MSK = timezone(timedelta(hours=3))
 BASE = Path(__file__).resolve().parent
 OBS_CSV = BASE / "data/obs.csv"
+PRICES_CSV = BASE / "data/prices.csv"  # ориентировочные цены из отчётов канала
 TG_CHAT_FILE = BASE / "data/telegram_chat.txt"
 TG_ALERTS_FILE = BASE / "data/telegram_alerts.json"  # последнее известное состояние заправок (для оповещений)
 PAGE_URL = "https://dooodoivan.github.io/benzin-page/"  # сводка, которую публикует GitHub Actions
@@ -133,6 +134,12 @@ def open_db():
             UNIQUE (seen_at, address, fuel, available, kind)
         )""")
     db.execute("CREATE INDEX obs_addr ON obs(address, fuel, seen_at)")
+    db.execute("""CREATE TABLE prices (seen_at TEXT NOT NULL, address TEXT NOT NULL, fuel TEXT NOT NULL, price REAL NOT NULL,
+                  UNIQUE (address, fuel, seen_at))""")
+    if PRICES_CSV.exists():
+        with PRICES_CSV.open(encoding="utf-8", newline="") as f:
+            db.executemany("INSERT OR IGNORE INTO prices VALUES (?,?,?,?)",
+                           [(r["seen_at"], r["address"], r["fuel"], float(r["price"])) for r in csv.DictReader(f)])
     if OBS_CSV.exists():
         with OBS_CSV.open(encoding="utf-8", newline="") as f:
             rows = [(r["seen_at"], r["address"], r["fuel"], int(r["available"]), r["status"], r["kind"],
@@ -156,6 +163,13 @@ def save_db(db):
         w.writerow(OBS_FIELDS)
         w.writerows(db.execute(f"SELECT {', '.join(OBS_FIELDS)} FROM obs ORDER BY seen_at, address, fuel, kind, available"))
     tmp.replace(OBS_CSV)
+    # цены: старше RETENTION_DAYS удаляем, но последнюю известную цену по каждой заправке и марке оставляем
+    db.execute("""DELETE FROM prices WHERE seen_at < ? AND (address, fuel, seen_at) NOT IN
+                  (SELECT address, fuel, MAX(seen_at) FROM prices GROUP BY address, fuel)""", (cutoff,))
+    with PRICES_CSV.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["seen_at", "address", "fuel", "price"])
+        w.writerows(db.execute("SELECT seen_at, address, fuel, price FROM prices ORDER BY address, fuel, seen_at"))
 
 
 # ---------- чтение и разбор канала ----------
@@ -281,6 +295,42 @@ def parse_observations(post_id, post_ts, text):
     return obs
 
 
+def parse_prices(post_ts, text):
+    """Ориентировочные цены из отчёта по одной АЗС → [(seen_at, адрес, марка, цена)]."""
+    lines = [l.strip() for l in text.splitlines()]
+    addr = next((l.lstrip("📍 ").strip() for l in lines if l.startswith("📍")), None)
+    m = re.search(r"Ориентир:\s*(.+)", text)
+    if not addr or not m:
+        return []
+    m_upd = re.search(r"Обновлено в (\d{1,2}:\d{2})", text)
+    seen_at = stamp(m_upd.group(1), post_ts) if m_upd else post_ts.astimezone(MSK).isoformat()
+    return [(seen_at, clean_addr(addr), fuel, float(price.replace(",", ".")))
+            for fuel, price in re.findall(r"([\w+]+)\s*[—–-]\s*([\d]+(?:[.,]\d+)?)\s*₽", m.group(1))]
+
+
+def latest_prices(db, sids):
+    """→ {sid: {марка: (цена, когда, прежняя цена или None, когда цена стала текущей)}}"""
+    out = {}
+    for sid in sids:
+        address = REG.get(sid, {}).get("address")
+        cur = {}
+        for seen_at, fuel, price in db.execute(
+                "SELECT seen_at, fuel, price FROM prices WHERE address = ? ORDER BY seen_at", (address,)):
+            if fuel not in cur:
+                cur[fuel] = [price, seen_at, None, seen_at]
+            elif price != cur[fuel][0]:
+                cur[fuel] = [price, seen_at, cur[fuel][0], seen_at]
+            else:
+                cur[fuel][1] = seen_at
+        if cur:
+            out[sid] = {f: (v[0], datetime.fromisoformat(v[1]), v[2], datetime.fromisoformat(v[3])) for f, v in cur.items()}
+    return out
+
+
+def money(x):
+    return f"{x:.2f}".replace(".", ",") + " ₽"
+
+
 def collect(db, pages):
     """Читает до `pages` страниц канала (по 20 постов) → число новых наблюдений."""
     before, new_obs = None, 0
@@ -289,6 +339,8 @@ def collect(db, pages):
         if not posts:
             break
         for pid, ts, text in posts:
+            for pr in parse_prices(ts, text):
+                db.execute("INSERT OR IGNORE INTO prices VALUES (?,?,?,?)", pr)
             for o in parse_observations(pid, ts, text):
                 added = db.execute("INSERT OR IGNORE INTO obs VALUES (?,?,?,?,?,?,?,?,?)", o).rowcount
                 new_obs += added
@@ -510,13 +562,15 @@ def telegram_text(db, sids, wanted):
     title, _ = notify_text(db, sids, wanted)
     icons = {"have": "✅", "stale": "🟡", "term": "❓", "none": "❌", "unknown": "⚪"}
     parts = [f"<b>{html.escape(title)}</b>"]
+    prices = latest_prices(db, sids)
     for sid, fuels, (cls, label, _, _) in ordered_stations(db, now, sids, wanted):
         lines = [f"{icons[cls]} <b>{html.escape(REG[sid]['name'])}</b> — {label}"]
         for fuel in FUEL_CHOICES:
             if fuel in wanted and fuel in fuels and now - fuels[fuel][0] <= FRESH:
                 seen_at, avail, _, queue, kind = fuels[fuel]
+                price = prices.get(sid, {}).get(fuel)
                 lines.append(f"   {fuel_name(fuel)}: {status_word(avail, kind, seen_at, now)}, {seen_at:%H:%M} ({KIND_RU[kind]})"
-                             + (f", очередь {html.escape(queue)}" if queue else ""))
+                             + (f", очередь {html.escape(queue)}" if queue else "") + (f", ~{money(price[0])}" if price else ""))
         forecast = short_forecast(db, sid, now, wanted)
         if forecast:
             lines.append(f"   📊 {forecast}")
@@ -571,13 +625,16 @@ def alert_text(db, items, now, wanted):
     fuels_all = {f for _, fs in items for f in fs}
     lines = ["<b>⛽ Появился бензин</b>" if not ("ДТ" in fuels_all and len(fuels_all) == 1) else "<b>⛽ Появилось дизельное топливо</b>"]
     latest = latest_state(db, [sid for sid, _ in items])
+    prices = latest_prices(db, [sid for sid, _ in items])
     for sid, fs in items:
         parts = []
         for fuel in FUEL_CHOICES:
             if fuel in fs and fuel in latest[sid]:
                 seen_at, _, _, queue, kind = latest[sid][fuel]
+                price = prices.get(sid, {}).get(fuel)
                 parts.append(f"{fuel_name(fuel)} есть ({seen_at:%H:%M}, {KIND_RU[kind]}"
-                             + (f", очередь {html.escape(queue)}" if queue else "") + ")")
+                             + (f", очередь {html.escape(queue)}" if queue else "") + ")"
+                             + (f", ~{money(price[0])}" if price else ""))
         lines.append(f"\n✅ <b>{html.escape(REG[sid]['name'])}</b>\n   " + "; ".join(parts))
         st = station_stats(db, sid, now, wanted)
         if st and median_duration(st["durations"]):
@@ -1035,6 +1092,7 @@ def write_report(db, path=None, sids=None, combos=None):
     combos = list(dict.fromkeys([tuple(DEFAULT_FUELS)] + [tuple(c) for c in (combos or [])]))
     since = (now - FRESH).isoformat()
     cards = []
+    prices = latest_prices(db, sids)
     for sid, fuels, (cls, label, _, _) in ordered_stations(db, now, sids):
         rows, per_fuel = [], {}
         for fuel in FUEL_CHOICES:
@@ -1052,6 +1110,19 @@ def write_report(db, path=None, sids=None, combos=None):
         empty = '<p class="muted nodata">Информации пока нет: за последние сутки отчётов по этой заправке и выбранным маркам не было.</p>'
         table = ('<table><tr><th>Марка</th><th>Статус</th><th>Когда</th><th>Очередь</th><th>Источник</th></tr>'
                  + "".join(rows) + "</table>" + empty) if rows else empty
+        chips = []
+        for fuel in FUEL_CHOICES:
+            if fuel in prices.get(sid, {}):
+                price, seen, prev, changed = prices[sid][fuel]
+                delta = ""
+                if prev is not None and price != prev:
+                    up = price > prev
+                    delta = (f' <span class="{"p-up" if up else "p-down"}" title="было {money(prev)}, изменилась {changed:%d.%m %H:%M}">'
+                             f'{"↑" if up else "↓"}{money(abs(price - prev))[:-2]} с {changed:%d.%m}</span>')
+                hide = "" if fuel in DEFAULT_FUELS else " nosel"
+                chips.append(f'<span class="chip{hide}" data-fuel="{esc(fuel)}" title="ориентир на {seen:%d.%m %H:%M}">'
+                             f'{fuel_name(fuel)} <b>{money(price)}</b>{delta}</span>')
+        price_html = f'<p class="prices">💰 Ориентир: {"".join(chips)}</p>' if chips else ""
         hist = []
         for seen_at, fuel, avail, kind in db.execute(
                 "SELECT seen_at, fuel, available, kind FROM obs WHERE address = ? AND seen_at >= ? ORDER BY seen_at DESC",
@@ -1065,7 +1136,7 @@ def write_report(db, path=None, sids=None, combos=None):
                      f'<ul>{"".join(hist[:120])}</ul></details>' if hist else "")
         cards.append(f'<section class="card st{"" if sid in shown else " nosel"}" data-sid="{sid}" '
                      f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}"><div class="head">'
-                     f'<h2>{esc(REG[sid]["name"])}</h2><span class="badge {cls}">{label}</span></div>{table}{hist_html}</section>')
+                     f'<h2>{esc(REG[sid]["name"])}</h2><span class="badge {cls}">{label}</span></div>{table}{price_html}{hist_html}</section>')
     blocks = "".join(
         f'<div class="fblock{"" if i == 0 else " nosel"}" data-fuels="{esc(",".join(c))}">{stats_section(db, now, sids, shown, list(c))}</div>'
         for i, c in enumerate(combos))
@@ -1133,6 +1204,8 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
 .st-q {{ color:var(--maybe); font-weight:800; font-size:1.1em; cursor:help; }}
 .st-qr {{ color:var(--none); font-weight:800; font-size:1.1em; cursor:help; }} .st-no {{ color:var(--none); font-weight:600; }}
 .st-yes {{ color:var(--have); font-weight:600; }}
+.prices {{ margin:10px 0 0; font-size:14px; color:var(--text2); display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }}
+.prices .chip b {{ color:var(--text); }} .p-up {{ color:var(--none); font-size:12px; }} .p-down {{ color:var(--have); font-size:12px; }}
 .card > table:not(.tbl) {{ table-layout:fixed; }}
 .card > table:not(.tbl) th:nth-child(1) {{ width:16%; }} .card > table:not(.tbl) th:nth-child(2) {{ width:14%; }}
 .card > table:not(.tbl) th:nth-child(3) {{ width:20%; }} .card > table:not(.tbl) th:nth-child(4) {{ width:20%; }}
@@ -1159,7 +1232,8 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
 Наведите на график или нажмите на него, чтобы увидеть подробности.</div>
 <p class="note nosel" id="fnote">Статистика по вашему набору марок появится при следующем обновлении страницы (до 10 минут); пока показана по АИ-95/98.</p>
 {blocks}
-<p class="muted" style="margin-top:20px">«Водитель» — отчёт подписчика с заправки. «Сводка канала» — подтверждённые данные за последний час.
+<p class="muted" style="margin-top:20px">💰 «Ориентир» — ориентировочная цена из отчётов канала (обычно одинакова для всей сети);
+↑ — подорожало, ↓ — подешевело с указанной даты. «Водитель» — отчёт подписчика с заправки. «Сводка канала» — подтверждённые данные за последний час.
 «Терминалы оплаты» — топливо продаётся по данным касс, но водители ещё не подтвердили; если рядом по времени есть отчёт водителя, в статистике учитывается он.
 Состояние считается неизменным до следующего отчёта, но не дольше 2 часов; дальше — «нет данных».</p>
 </main><div id="tip" role="tooltip"></div>
