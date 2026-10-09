@@ -493,27 +493,30 @@ def tg_call(token, method, timeout=30, **params):
         return json.load(resp)
 
 
-def page_url(sids=None, fuels=None):
-    """Адрес сводки со своими заправками и марками: ?s=код,код,…&f=92,95"""
+def page_url(sids=None, fuels=None, own=False):
+    """Адрес сводки со своими заправками и марками: ?s=код,код,…&f=92,95 (own=1 — для владельца)."""
     params = []
     if sids:
         params.append("s=" + ",".join(sids))
     if fuels and list(fuels) != DEFAULT_FUELS:
         params.append("f=" + urllib.parse.quote(",".join(fuels), safe=","))
+    if own:
+        params.append("own=1")
     return PAGE_URL + ("?" + "&".join(params) if params else "")
 
 
-def page_button(now, sids=None, fuels=None):
+def page_button(now, sids=None, fuels=None, cid=None):
     """Кнопка под сообщением: открывает сводку внутри Telegram (t= — чтобы не показывалась старая копия)."""
-    url = page_url(sids, fuels)
+    url = page_url(sids, fuels, own=bool(cid) and str(cid) == owner_id())
     url += ("&" if "?" in url else "?") + f"t={now:%m%d%H%M}"
     return json.dumps({"inline_keyboard": [[{"text": "⛽ Открыть сводку", "web_app": {"url": url}}]]})
 
 
 def set_menu_button(token, chat_id, sids=None, fuels=None):
     """Постоянная кнопка «⛽ Сводка» рядом с полем ввода — открывает сводку со своими заправками и марками."""
+    url = page_url(sids, fuels, own=str(chat_id) == owner_id())
     tg_call(token, "setChatMenuButton", chat_id=chat_id, menu_button=json.dumps(
-        {"type": "web_app", "text": "⛽ Сводка", "web_app": {"url": page_url(sids, fuels)}}))
+        {"type": "web_app", "text": "⛽ Сводка", "web_app": {"url": url}}))
 
 
 def tg_chat_id(token):
@@ -570,7 +573,7 @@ def cmd_telegram(args):
         subs = load_subs() if os.environ.get("SUBSCRIBERS_KEY") else empty_subs()
         sids, fuels = selection(subs, owner), fuel_selection(subs, owner)
         tg_call(token, "sendMessage", chat_id=owner, text=telegram_text(db, sids, fuels), parse_mode="HTML",
-                disable_web_page_preview="true", reply_markup=page_button(now, sids, fuels))
+                disable_web_page_preview="true", reply_markup=page_button(now, sids, fuels, owner))
         print("сводка отправлена в Telegram", file=sys.stderr)
         return
 
@@ -603,7 +606,7 @@ def cmd_telegram(args):
             continue
         try:
             tg_call(token, "sendMessage", chat_id=cid, parse_mode="HTML", disable_web_page_preview="true",
-                    text=alert_text(db, items, now, fuels), reply_markup=page_button(now, sids, fuels))
+                    text=alert_text(db, items, now, fuels), reply_markup=page_button(now, sids, fuels, cid))
         except Exception as e:  # например, подписчик заблокировал бота
             print(f"не удалось отправить …{cid[-4:]}: {e}", file=sys.stderr)
     print(("оповещение: " + ", ".join(f"{REG[s]['label']} {fuel_name(f)}" for s, f in sorted(appeared)))
@@ -1103,6 +1106,7 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
   Данные из канала @voronezh_benzin. Сбор с 7:00 до 24:00 каждые 10 минут, ночью не ведётся. Бледные строки — старше суток.
   Свои заправки и марки выбираются в боте: /stations и /fuels.</div>
   <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener">🔄 Обновить сейчас</a>
+  <div class="muted nosel" id="refresh-bot">Обновить данные — кнопка «🔄 Обновить» в боте.</div>
 </div>
 <div class="hint" id="hint" hidden>Нажмите <b>Run workflow</b> на GitHub. Примерно через 1–2 минуты эта страница обновится сама.
 Если на GitHub запрос отметится как «Cancelled» — это нормально: сервер уже выполнил сбор.</div>
@@ -1170,6 +1174,11 @@ document.querySelectorAll('.fblock:not(.nosel) .events, .fblock .events').forEac
   shown.slice(12).forEach(li => li.classList.add('nosel'));
   if (!shown.length) ul.nextElementSibling.hidden = false;
 }});
+// «Обновить сейчас» (запуск сбора на GitHub) доступен только владельцу; в Telegram у остальных — подсказка про кнопку в боте
+if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData && params.get('own') !== '1') {{
+  document.getElementById('refresh').classList.add('nosel');
+  document.getElementById('refresh-bot').classList.remove('nosel');
+}}
 // «N мин назад» и автообновление, когда сервер опубликует более свежую сводку
 const updated = new Date(document.body.dataset.updated);
 function tickAgo() {{ const m = Math.round((Date.now() - updated) / 60000);
@@ -1294,21 +1303,27 @@ def say(token, chat_id, text, markup=None):
     return tg_call(token, "sendMessage", **params)
 
 
-BTN_STATIONS, BTN_FUELS = "📍 Заправки", "🛢 Марки"
-KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}]], "resize_keyboard": True, "is_persistent": True}
-KEYBOARD_VERSION = 1  # увеличить, если поменяются кнопки — тогда бот пришлёт их всем заново
+BOT_NAME = "Мои заправки"
+BTN_STATIONS, BTN_FUELS, BTN_REFRESH = "📍 Заправки", "🛢 Марки", "🔄 Обновить"
+KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}]],
+            "resize_keyboard": True, "is_persistent": True}
+KEYBOARD_VERSION = 2  # увеличить, если поменяются кнопки — тогда бот пришлёт их всем заново
 KEYBOARD_TEXT = ("Внизу — кнопки:\n📍 Заправки — выбрать заправки\n🛢 Марки — выбрать марки топлива\n"
+                 "🔄 Обновить — собрать свежие данные прямо сейчас\n"
                  "⛽ Сводка (слева) — сводка и статистика по вашим заправкам.")
+REFRESH = {"waiting": set(), "last": 0.0}  # кто нажал «Обновить» и когда данные обновлялись в последний раз
+REFRESH_MIN = 60  # не чаще раза в минуту
 
 WELCOME = (
-    "👋 Здравствуйте! Я бот «Мой бензин» — помогаю найти топливо на заправках Воронежа.\n\n"
+    "👋 Здравствуйте! Я бот «Мои заправки» — помогаю найти топливо на заправках Воронежа.\n\n"
     "<b>Что я умею</b>\n"
     "🔔 <b>Оповещения</b> — пишу, как только на ваших заправках появляется нужное топливо. "
     "Источник — отчёты водителей и сводки канала @voronezh_benzin.\n"
     "⛽ <b>Сводка</b> — кнопка слева от поля ввода: где топливо есть прямо сейчас, очереди, "
     "а также статистика — когда его обычно привозят и когда оно заканчивается.\n"
-    "📍 <b>Заправки</b> и 🛢 <b>Марки</b> — кнопки под полем ввода: можно выбрать до 8 заправок и нужные марки.\n\n"
-    "Данные обновляются с 7:00 до 24:00 каждые 10 минут.\n\n"
+    "📍 <b>Заправки</b> и 🛢 <b>Марки</b> — кнопки под полем ввода: можно выбрать до 8 заправок и нужные марки.\n"
+    "🔄 <b>Обновить</b> — собрать свежие данные прямо сейчас.\n\n"
+    "Данные обновляются сами с 7:00 до 24:00 каждые 10 минут.\n\n"
     "<b>Шаг 1 из 2.</b> Выберите марки топлива, о которых хотите получать информацию, и нажмите «Далее»:")
 STEP2 = ("<b>Шаг 2 из 2.</b> Выберите заправки (до 8), о которых хотите получать информацию.\n"
          "Уже отмечены заправки по умолчанию — уберите лишние и добавьте свои. Сначала выберите сеть:")
@@ -1337,7 +1352,7 @@ def finish_onboarding(token, subs, cid):
 
 
 HELP_SUB = ("Бот присылает оповещение, когда на ваших заправках появляется нужное вам топливо.\n"
-            "📍 Заправки — выбрать заправки (до 8)\n🛢 Марки — выбрать марки топлива\n"
+            "📍 Заправки — выбрать заправки (до 8)\n🛢 Марки — выбрать марки топлива\n🔄 Обновить — свежие данные сейчас\n"
             "Сводка со статистикой — кнопка «⛽ Сводка» внизу.\n/stop — отписаться.")
 
 
@@ -1438,7 +1453,7 @@ def handle_stations_cb(token, cb, subs):
     if parts[1] == "done" and entry.get("onboarding") == "stations":  # шаг 2 пройден → итог
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
                 text="✅ <b>Шаг 2 из 2.</b> Ваши заправки:\n" + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids),
-                reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid)))
+                reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid), cid))
         finish_onboarding(token, subs, cid)
         return True
     if parts[1] == "done":
@@ -1446,7 +1461,7 @@ def handle_stations_cb(token, cb, subs):
                 + "\n\nОповещения будут приходить по ним, сводка — кнопка «⛽ Сводка» (обновится примерно через минуту). "
                 "Изменить — кнопка «📍 Заправки».")
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), text=text, parse_mode="HTML",
-                reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid)))
+                reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid), cid))
         return changed
     text, rows = stations_view(sids, view)
     if view == "home" and entry.get("onboarding") == "stations":
@@ -1499,7 +1514,7 @@ def handle_fuels_cb(token, cb, subs):
     if data == "fu:done":
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
                 text=f"✅ Сохранено. Марки: {fuels_title(fuels)}.\nОповещения и сводка — по ним. Изменить — кнопка «🛢 Марки».",
-                reply_markup=page_button(datetime.now(MSK), selection(subs, cid), fuels))
+                reply_markup=page_button(datetime.now(MSK), selection(subs, cid), fuels, cid))
         return changed
     onboarding = entry.get("onboarding") == "fuels"
     text, rows = fuels_view(fuels, onboarding)
@@ -1516,7 +1531,15 @@ def handle_message(token, msg, subs):
         return False
     cid, text = str(chat["id"]), (msg.get("text") or "").strip()
     owner = owner_id()
-    text = {BTN_STATIONS: "/stations", BTN_FUELS: "/fuels"}.get(text, text)
+    text = {BTN_STATIONS: "/stations", BTN_FUELS: "/fuels", BTN_REFRESH: "/refresh"}.get(text, text)
+    if text.startswith("/refresh") and (cid == owner or cid in subs["subscribers"]):
+        if time.time() - REFRESH["last"] < REFRESH_MIN:
+            say(token, cid, f"Данные обновлялись меньше минуты назад — сводка свежая.",
+                json.loads(page_button(datetime.now(MSK), selection(subs, cid), fuel_selection(subs, cid), cid)))
+        else:
+            REFRESH["waiting"].add(cid)
+            say(token, cid, "⏳ Обновляю данные, это займёт около минуты…")
+        return False
     if text.startswith("/stations") and (cid == owner or cid in subs["subscribers"]):
         view_text, rows = stations_view(selection(subs, cid), "home")
         say(token, cid, view_text, {"inline_keyboard": rows})
@@ -1616,13 +1639,21 @@ def setup_bot(db):
         return
     token, owner = os.environ["TELEGRAM_TOKEN"], owner_id()
     load_registry(db)
+    try:
+        if tg_call(token, "getMyName").get("result", {}).get("name") != BOT_NAME:
+            tg_call(token, "setMyName", name=BOT_NAME)
+            print(f"имя бота: {BOT_NAME}", file=sys.stderr)
+    except Exception as e:  # Telegram ограничивает частоту смены имени — не страшно, попробуем в следующую смену
+        print(f"имя бота: {e}", file=sys.stderr)
     tg_call(token, "setMyCommands", commands=json.dumps([
         {"command": "stations", "description": "Выбрать заправки"},
         {"command": "fuels", "description": "Выбрать марки топлива"},
+        {"command": "refresh", "description": "Обновить данные сейчас"},
         {"command": "stop", "description": "Отписаться от оповещений"}]))
     tg_call(token, "setMyCommands", scope=json.dumps({"type": "chat", "chat_id": int(owner)}), commands=json.dumps([
         {"command": "stations", "description": "Выбрать свои заправки"},
         {"command": "fuels", "description": "Выбрать марки топлива"},
+        {"command": "refresh", "description": "Обновить данные сейчас"},
         {"command": "list", "description": "Подписчики"}]))
     for cid, sids, fuels in all_selections():
         try:
@@ -1764,6 +1795,21 @@ def save_and_push():
     print("не удалось отправить данные в хранилище", file=sys.stderr)
 
 
+def answer_refresh():
+    """После сбора: ответить всем, кто нажал «🔄 Обновить»."""
+    REFRESH["last"] = time.time()
+    waiting, REFRESH["waiting"] = REFRESH["waiting"], set()
+    if not waiting or not bot_ready():
+        return
+    token, subs, now = os.environ["TELEGRAM_TOKEN"], load_subs(), datetime.now(MSK)
+    for cid in waiting:
+        try:
+            say(token, cid, f"✅ Данные обновлены в {now:%H:%M}. Страница сводки обновится примерно через минуту.",
+                json.loads(page_button(now, selection(subs, cid), fuel_selection(subs, cid), cid)))
+        except Exception as e:
+            print(f"обновление …{cid[-4:]}: {e}", file=sys.stderr)
+
+
 def work_once():
     """Один сбор: канал → data/obs.csv → страница → оповещения в Telegram → сохранить в хранилище."""
     t0 = time.time()
@@ -1784,6 +1830,10 @@ def work_once():
             fn()
         except Exception as e:
             print(f"{step}: ошибка {e}", file=sys.stderr)
+    try:
+        answer_refresh()
+    except Exception as e:
+        print(f"обновить: ошибка {e}", file=sys.stderr)
     print(f"{datetime.now(MSK):%d.%m %H:%M} сбор: новых наблюдений {new}, {time.time() - t0:.0f} с", file=sys.stderr, flush=True)
 
 
@@ -1840,7 +1890,7 @@ def cmd_worker(args):
         manual = []
         if time.time() - last_queue_check >= 20:
             manual, last_queue_check = pending_manual_runs(), time.time()
-        if do_now or manual:
+        if do_now or manual or REFRESH["waiting"]:
             work_once()
             for run_id in set(manual + pending_manual_runs()):  # ручные запросы выполнены — убираем из очереди
                 try:
