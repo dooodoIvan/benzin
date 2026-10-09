@@ -486,7 +486,8 @@ def latest_state(db, sids):
             continue
         for seen_at, fuel, avail, status, kind, queue in db.execute(
                 "SELECT seen_at, fuel, available, status, kind, queue FROM obs WHERE address = ? AND seen_at >= ? "
-                "ORDER BY seen_at", (address, since)):
+                "ORDER BY seen_at, CASE kind WHEN 'report' THEN 2 WHEN 'summary' THEN 1 ELSE 0 END",  # при равном времени — водитель
+                (address, since)):
             if fuel in FUEL_CHOICES:
                 latest[sid][fuel] = (datetime.fromisoformat(seen_at), avail, status, queue, kind)
     return latest
@@ -1169,12 +1170,17 @@ def write_report(db, path=None, sids=None, combos=None):
                 chips.append(f'<span class="chip{hide}" data-fuel="{esc(fuel)}" title="ориентир на {seen:%d.%m %H:%M}">'
                              f'{fuel_name(fuel)} <b>{money(price)}</b>{delta}</span>')
         price_html = f'<p class="prices">💰 Ориентир: {"".join(chips)}</p>' if chips else ""
-        hist = []
+        hist, seen_keys = [], set()
         for seen_at, fuel, avail, kind in db.execute(
-                "SELECT seen_at, fuel, available, kind FROM obs WHERE address = ? AND seen_at >= ? ORDER BY seen_at DESC",
+                "SELECT seen_at, fuel, available, kind FROM obs WHERE address = ? AND seen_at >= ? "
+                "ORDER BY seen_at DESC, CASE kind WHEN 'report' THEN 0 WHEN 'summary' THEN 1 ELSE 2 END",
                 (REG[sid]["address"], since)):
             if fuel in FUEL_CHOICES:
                 t = datetime.fromisoformat(seen_at)
+                key = (f"{t:%Y%m%d%H%M}", fuel, avail, kind == "signal")  # водитель и общая сводка в ту же минуту — один отчёт
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
                 hide = "" if fuel in DEFAULT_FUELS else ' class="nosel"'
                 hist.append(f'<li data-fuel="{esc(fuel)}"{hide}><b>{t:%H:%M}</b> '
                             f'{fuel_name(fuel)} — {status_html(avail, kind, t, now, history=True)} <span class="muted">({KIND_RU[kind]})</span></li>')
