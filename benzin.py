@@ -6,7 +6,7 @@
 только пока сборщик регулярно запускается: на GitHub Actions с 7:00 до 24:00 МСК каждые 10 минут
 (.github/workflows/collect.yml, команда worker). Данные хранятся в data/obs.csv в этом репозитории.
 
-Заправки определяются по адресу из канала. Каждый пользователь бота выбирает до 8 своих заправок
+Заправки определяются по адресу из канала. Каждый пользователь бота выбирает до 10 своих заправок
 (/stations): по ним приходят оповещения и строится его страница со сводкой.
 
 Команды:
@@ -53,7 +53,7 @@ ALIASES = [  # шаблон адреса, короткое имя, сеть (е�
     (r"новая усмань.*дорожная улица,\s*101(?![\dа-я])", "Дорожная 101", "Роснефть"),
     (r"ленинский проспект,\s*154\s*а(?![\dа-я])", "Ленинский 154А", "Татнефть"),
 ]
-MAX_STATIONS = 8  # столько цветов хорошо различимы на графиках
+MAX_STATIONS = 10  # сколько заправок может выбрать пользователь
 CATALOG_DAYS = 30  # в списке для выбора — заправки, о которых канал писал за последние 30 дней
 FUEL_CHOICES = ["92", "95", "95+", "98", "100", "ДТ"]  # марки, о которых пишет канал
 DEFAULT_FUELS = ["95", "98"]  # марки по умолчанию (пока пользователь не выбрал свои в /fuels)
@@ -496,8 +496,8 @@ def tg_call(token, method, timeout=30, **params):
 def page_url(sids=None, fuels=None, own=False):
     """Адрес сводки со своими заправками и марками: ?s=код,код,…&f=92,95 (own=1 — для владельца)."""
     params = []
-    if sids:
-        params.append("s=" + ",".join(sids))
+    if sids is not None:
+        params.append("s=" + (",".join(sids) or "-"))  # «-» — заправки ещё не выбраны
     if fuels and list(fuels) != DEFAULT_FUELS:
         params.append("f=" + urllib.parse.quote(",".join(fuels), safe=","))
     if own:
@@ -816,7 +816,7 @@ def short_forecast(db, sid, now, fuels=None):
 # ---------- графики (SVG) ----------
 #
 # Страница одна на всех: в ней есть все заправки, выбранные хоть кем-то. Скрипт страницы показывает
-# только заправки из ссылки (?s=код,код,…) и раскрашивает их по порядку выбора (до 8 цветов).
+# только заправки из ссылки (?s=код,код,…) в порядке выбора.
 # Поэтому каждая заправка — отдельная строка (data-sid), а её цвет задаётся переменной --c.
 
 W = 400  # ширина графика в единицах viewBox — рассчитано на телефон; на компьютере ширина ограничена в CSS
@@ -1111,6 +1111,7 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
 <div class="hint" id="hint" hidden>Нажмите <b>Run workflow</b> на GitHub. Примерно через 1–2 минуты эта страница обновится сама.
 Если на GitHub запрос отметится как «Cancelled» — это нормально: сервер уже выполнил сбор.</div>
 <h2 class="section">Сводка сейчас</h2>
+<p class="hint nosel" id="empty-sel">Вы ещё не выбрали заправки — нажмите «📍 Заправки» в боте.</p>
 <div id="cards">{"".join(cards)}</div>
 <h2 class="section">Статистика: когда привозят и когда заканчивается</h2>
 <div class="muted">Все выбранные заправки на общих графиках, у каждой свой цвет.
@@ -1162,13 +1163,13 @@ if (sel.length) {{
   document.querySelectorAll('[data-sid]').forEach(el => {{
     const i = sel.indexOf(el.dataset.sid);
     el.classList.toggle('nosel', i < 0);
-    if (i >= 0) el.style.setProperty('--c', `var(--s${{i % {MAX_STATIONS} + 1}})`);
   }});
   document.querySelectorAll('.rows').forEach(box => {{
     [...box.children].filter(c => c.dataset.sid)
       .sort((a, b) => sel.indexOf(a.dataset.sid) - sel.indexOf(b.dataset.sid)).forEach(c => box.appendChild(c));
   }});
 }}
+if (sel.includes('-')) document.getElementById('empty-sel').classList.remove('nosel');
 document.querySelectorAll('.fblock:not(.nosel) .events, .fblock .events').forEach(ul => {{
   const shown = [...ul.children].filter(li => !li.classList.contains('nosel'));
   shown.slice(12).forEach(li => li.classList.add('nosel'));
@@ -1270,15 +1271,19 @@ def owner_id():
 
 
 def selection(subs, cid):
-    """Заправки пользователя; если он ещё не выбирал — заправки по умолчанию."""
+    """Заправки пользователя. Владелец, пока не выбирал, — заправки по умолчанию; новые пользователи — пусто."""
     entry = subs["owner"] if cid == owner_id() else subs["subscribers"].get(cid, {})
-    return clean_selection(entry.get("stations")) or default_sids()
+    if "stations" in entry:
+        return clean_selection(entry["stations"])
+    return default_sids() if cid == owner_id() else []
 
 
 def fuel_selection(subs, cid):
-    """Марки пользователя; если он ещё не выбирал — марки по умолчанию."""
+    """Марки пользователя. Владелец, пока не выбирал, — марки по умолчанию; новые пользователи — пусто."""
     entry = subs["owner"] if cid == owner_id() else subs["subscribers"].get(cid, {})
-    return [f for f in FUEL_CHOICES if f in (entry.get("fuels") or [])] or list(DEFAULT_FUELS)
+    if "fuels" in entry:
+        return [f for f in FUEL_CHOICES if f in entry["fuels"]]
+    return list(DEFAULT_FUELS) if cid == owner_id() else []
 
 
 def set_fuels(subs, cid, fuels):
@@ -1321,12 +1326,12 @@ WELCOME = (
     "Источник — отчёты водителей и сводки канала @voronezh_benzin.\n"
     "⛽ <b>Сводка</b> — кнопка слева от поля ввода: где топливо есть прямо сейчас, очереди, "
     "а также статистика — когда его обычно привозят и когда оно заканчивается.\n"
-    "📍 <b>Заправки</b> и 🛢 <b>Марки</b> — кнопки под полем ввода: можно выбрать до 8 заправок и нужные марки.\n"
+    "📍 <b>Заправки</b> и 🛢 <b>Марки</b> — кнопки под полем ввода: можно выбрать до 10 заправок и нужные марки.\n"
     "🔄 <b>Обновить</b> — собрать свежие данные прямо сейчас.\n\n"
     "Данные обновляются сами с 7:00 до 24:00 каждые 10 минут.\n\n"
     "<b>Шаг 1 из 2.</b> Выберите марки топлива, о которых хотите получать информацию, и нажмите «Далее»:")
-STEP2 = ("<b>Шаг 2 из 2.</b> Выберите заправки (до 8), о которых хотите получать информацию.\n"
-         "Уже отмечены заправки по умолчанию — уберите лишние и добавьте свои. Сначала выберите сеть:")
+STEP2 = ("<b>Шаг 2 из 2.</b> Выберите заправки (до 10), о которых хотите получать информацию.\n"
+         "Сначала выберите сеть, затем отметьте нужные заправки и нажмите «Готово»:")
 
 
 def user_entry(subs, cid):
@@ -1352,7 +1357,7 @@ def finish_onboarding(token, subs, cid):
 
 
 HELP_SUB = ("Бот присылает оповещение, когда на ваших заправках появляется нужное вам топливо.\n"
-            "📍 Заправки — выбрать заправки (до 8)\n🛢 Марки — выбрать марки топлива\n🔄 Обновить — свежие данные сейчас\n"
+            "📍 Заправки — выбрать заправки (до 10)\n🛢 Марки — выбрать марки топлива\n🔄 Обновить — свежие данные сейчас\n"
             "Сводка со статистикой — кнопка «⛽ Сводка» внизу.\n/stop — отписаться.")
 
 
@@ -1445,18 +1450,20 @@ def handle_stations_cb(token, cb, subs):
         elif sid in REG:
             sids = sids + [sid]
             changed = True
+    if parts[1] == "done" and not sids:
+        notice = "Выберите хотя бы одну заправку: откройте сеть и отметьте нужные."
     if changed:
         set_selection(subs, cid, sids)
         set_menu_button(token, cid, sids, fuel_selection(subs, cid))
     tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"], **({"text": notice, "show_alert": "true"} if notice else {}))
     entry = user_entry(subs, cid)
-    if parts[1] == "done" and entry.get("onboarding") == "stations":  # шаг 2 пройден → итог
+    if parts[1] == "done" and sids and entry.get("onboarding") == "stations":  # шаг 2 пройден → итог
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
                 text="✅ <b>Шаг 2 из 2.</b> Ваши заправки:\n" + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids),
                 reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid), cid))
         finish_onboarding(token, subs, cid)
         return True
-    if parts[1] == "done":
+    if parts[1] == "done" and sids:
         text = ("✅ Сохранено. Ваши заправки:\n" + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids)
                 + "\n\nОповещения будут приходить по ним, сводка — кнопка «⛽ Сводка» (обновится примерно через минуту). "
                 "Изменить — кнопка «📍 Заправки».")
@@ -1494,11 +1501,12 @@ def handle_fuels_cb(token, cb, subs):
     fuels, changed, notice = fuel_selection(subs, cid), False, None
     if data.startswith("fu:t:"):
         f = data[5:]
-        if f in fuels and len(fuels) == 1:
-            notice = "Нужна хотя бы одна марка."
-        elif f in FUEL_CHOICES:
+        if f in FUEL_CHOICES:
             fuels = [x for x in FUEL_CHOICES if (x in fuels) != (x == f)]
             changed = True
+    if data == "fu:done" and not fuels:
+        notice = "Выберите хотя бы одну марку."
+        data = "fu:home"
     if changed:
         set_fuels(subs, cid, fuels)
         set_menu_button(token, cid, selection(subs, cid), fuels)
@@ -1587,8 +1595,8 @@ def handle_message(token, msg, subs):
         say(token, owner, f"🔔 <b>{html.escape(name)}</b> хочет получать оповещения о появлении бензина.",
             {"inline_keyboard": [[{"text": "✅ Добавить", "callback_data": f"sub:ok:{cid}"},
                                   {"text": "❌ Отклонить", "callback_data": f"sub:no:{cid}"}]]})
-        say(token, cid, "Запрос отправлен владельцу бота. Как только он подтвердит, вы сможете выбрать заправки "
-                        "и получать оповещения, когда на них появляется АИ-95 или АИ-98.")
+        say(token, cid, "Запрос отправлен владельцу бота. Как только он подтвердит, вы сможете выбрать заправки и марки топлива "
+                        "и получать оповещения, когда на ваших заправках появляется нужное топливо.")
         return True
     say(token, cid, "Это бот оповещений о бензине в Воронеже. Отправьте /start, чтобы попросить доступ.")
     return False
@@ -1612,9 +1620,8 @@ def handle_callback(token, cb, subs):
 
     if action == "ok" and cid in subs["pending"]:
         info = subs["pending"].pop(cid)
-        sids = default_sids()
-        subs["subscribers"][cid] = {"name": info["name"], "since": datetime.now(MSK).isoformat(), "stations": sids}
-        set_menu_button(token, cid, sids)
+        subs["subscribers"][cid] = {"name": info["name"], "since": datetime.now(MSK).isoformat(), "stations": [], "fuels": []}
+        set_menu_button(token, cid, [], [])
         say(token, cid, "✅ Владелец бота подтвердил доступ.")
         start_onboarding(token, subs, cid)
         done(f"✅ Добавлено в подписчики: {html.escape(info['name'])}.")
@@ -1770,7 +1777,7 @@ def publish_page(db):
     load_registry(db)
     people = all_selections()
     watched = list(dict.fromkeys(sid for _, sids, _ in people for sid in sids))
-    combos = [tuple(f for f in FUEL_CHOICES if f in fuels) for _, _, fuels in people]
+    combos = [tuple(f for f in FUEL_CHOICES if f in fuels) for _, _, fuels in people if fuels]
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         page = Path(tmp)
