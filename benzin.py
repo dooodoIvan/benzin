@@ -508,6 +508,11 @@ def station_state(fuels, now, wanted=None):
     return "unknown", "Нет информации", 4, None
 
 
+def short_when(t, now):
+    days = (now.date() - t.date()).days
+    return f"{t:%H:%M}" if days == 0 else f"вчера {t:%H:%M}" if days == 1 else f"{t:%d.%m %H:%M}"
+
+
 def when_text(t, now):
     """«в 14:31», «вчера в 22:17» или «07.10 в 18:05»."""
     days = (now.date() - t.date()).days
@@ -1080,6 +1085,12 @@ def stats_section(db, now, sids, shown, fuels):
 
 # ---------- страница со сводкой ----------
 
+PUMP_ICON = ('<span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" '
+             'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+             '<path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><path d="M3 21h12"/><path d="M7 8h4"/>'
+             '<path d="M14 10h2a2 2 0 0 1 2 2v4.5a1.5 1.5 0 0 0 3 0V8.5L18 5.5"/></svg></span>')
+
+
 def write_report(db, path=None, sids=None, combos=None):
     """sids — все заправки, которые должны быть на странице (по умолчанию — заправки владельца);
     combos — наборы марок, для которых считать статистику (у разных пользователей разные).
@@ -1105,7 +1116,7 @@ def write_report(db, path=None, sids=None, combos=None):
                 rows.append(
                     f'<tr class="{"maybe" if kind == "signal" else "yes" if avail else "no"}{old}{hide}" data-fuel="{esc(fuel)}">'
                     f'<td class="fuel">{fuel_name(fuel)}</td>'
-                    f'<td>{status_html(avail, kind, seen_at, now)}</td><td>{seen_at:%d.%m %H:%M}</td>'
+                    f'<td>{status_html(avail, kind, seen_at, now)}</td><td>{short_when(seen_at, now)}</td>'
                     f'<td>{esc(queue or "—")}</td><td class="src">{KIND_RU[kind]}</td></tr>')
         empty = '<p class="muted nodata">Информации пока нет: за последние сутки отчётов по этой заправке и выбранным маркам не было.</p>'
         table = ('<table><tr><th>Марка</th><th>Статус</th><th>Когда</th><th>Очередь</th><th>Источник</th></tr>'
@@ -1134,9 +1145,11 @@ def write_report(db, path=None, sids=None, combos=None):
                             f'{fuel_name(fuel)} — {status_html(avail, kind, t, now)} <span class="muted">({KIND_RU[kind]})</span></li>')
         hist_html = (f'<details class="hist"><summary>Все отчёты за сутки (<span class="n">0</span>)</summary>'
                      f'<div class="dc"><ul>{"".join(hist[:60])}</ul></div></details>' if hist else "")
+        title = REG[sid]["brand"] or "АЗС"
         cards.append(f'<section class="card st{"" if sid in shown else " nosel"}" data-sid="{sid}" '
-                     f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}"><div class="head">'
-                     f'<h2>{esc(REG[sid]["name"])}</h2><span class="badge {cls}">{label}</span></div>{table}{price_html}{hist_html}</section>')
+                     f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}"><div class="head">{PUMP_ICON}'
+                     f'<div class="ttl"><h2>{esc(title)}</h2><span class="sub">{esc(short_address(REG[sid]["address"]))}</span></div>'
+                     f'<span class="badge {cls}">{label}</span></div>{table}{price_html}{hist_html}</section>')
     blocks = "".join(
         f'<div class="fblock{"" if i == 0 else " nosel"}" data-fuels="{esc(",".join(c))}">{stats_section(db, now, sids, shown, list(c))}</div>'
         for i, c in enumerate(combos))
@@ -1147,84 +1160,124 @@ def write_report(db, path=None, sids=None, combos=None):
     page = f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow">
 <title>Бензин · АИ-95/98</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script>
+(function () {{  // в Telegram — тема как в самом Telegram
+  const tg = window.Telegram && Telegram.WebApp;
+  if (tg && tg.initData && tg.colorScheme) document.documentElement.dataset.theme = tg.colorScheme;
+}})();
+</script>
 <style>
-:root {{ color-scheme: light; --bg:#f9f9f7; --card:#fcfcfb; --text:#0b0b0b; --text2:#52514e; --muted:#898781;
-  --line:#e1e0d9; --axis:#c3c2b7; --yes:#2a78d6; --track:#efeee9;
-  --have:#0ca30c; --maybe:#b7791f; --none:#d03b3b; --unknown:#898781; --off:#c3c2b7; --nodata:#dddcd5; {s_light} }}
-@media (prefers-color-scheme: dark) {{ :root {{ color-scheme: dark; --bg:#0d0d0d; --card:#1a1a19; --text:#fff; --text2:#c3c2b7;
-  --line:#2c2c2a; --axis:#383835; --yes:#3987e5; --track:#262624; --off:#55544f; --nodata:#3a3a37; {s_dark} }} }}
-body {{ margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }}
-main {{ max-width:780px; margin:0 auto; padding:24px 16px 48px; }}
-h1 {{ font-size:22px; margin:0 0 4px; }} h2 {{ font-size:17px; margin:0; }}
-h4 {{ font-size:13px; font-weight:600; color:var(--text2); margin:14px 0 2px; }}
+/* Тема: светлая по умолчанию; тёмная — по настройке устройства или теме Telegram (data-theme) */
+:root {{ color-scheme: light;
+  --bg:#e4e3df; --card:#efeeea; --raise:#f6f5f2; --text:#121212; --text2:#4a4944; --muted:#8a8983; --line:#d4d3cd;
+  --chip:#dcdbd5; --accent:#e5483d; --accent-text:#fff; --tile:#141414; --tile-ink:#fff;
+  --panel:#141414; --panel-text:#f3f2ee; --panel-text2:#c2c1bb; --panel-muted:#8c8b86; --panel-line:#2a2a28; --panel-nodata:#33332f;
+  --track:#d8d7d1; --nodata:#cfcec8; --have:#1e9e48; --maybe:#b98a13; --none:#d6402f; --unknown:#8a8983; --off:#c3c2b7;
+  --shadow:0 1px 0 rgba(0,0,0,.04), 0 8px 24px -16px rgba(0,0,0,.25); {s_light} }}
+@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ color-scheme: dark;
+  --bg:#0e0e0d; --card:#1a1a19; --raise:#222220; --text:#f3f2ee; --text2:#c4c3bd; --muted:#8b8a85; --line:#2b2b29;
+  --chip:#262624; --tile:#f1f0ec; --tile-ink:#141414;
+  --panel:#1f1f1d; --panel-line:#30302d; --panel-nodata:#3a3a36;
+  --track:#2a2a28; --nodata:#3a3a36; --have:#2fbf5c; --maybe:#e0a72a; --none:#ef5a49; --off:#55544f;
+  --shadow:none; {s_dark} }} }}
+:root[data-theme="dark"] {{ color-scheme: dark;
+  --bg:#0e0e0d; --card:#1a1a19; --raise:#222220; --text:#f3f2ee; --text2:#c4c3bd; --muted:#8b8a85; --line:#2b2b29;
+  --chip:#262624; --tile:#f1f0ec; --tile-ink:#141414;
+  --panel:#1f1f1d; --panel-line:#30302d; --panel-nodata:#3a3a36;
+  --track:#2a2a28; --nodata:#3a3a36; --have:#2fbf5c; --maybe:#e0a72a; --none:#ef5a49; --off:#55544f;
+  --shadow:none; {s_dark} }}
+* {{ -webkit-tap-highlight-color:transparent; }}
+body {{ margin:0; background:var(--bg); color:var(--text);
+  font:15px/1.5 "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing:antialiased; }}
+main {{ max-width:760px; margin:0 auto; padding:22px 16px 48px; }}
+h1 {{ font-size:26px; font-weight:500; letter-spacing:-.01em; margin:0; padding-bottom:16px; border-bottom:1px solid var(--line); color:var(--muted); }}
+h1 b {{ color:var(--text); font-weight:800; }}
+h2 {{ font-size:17px; font-weight:700; margin:0; letter-spacing:-.01em; }}
+h4 {{ font-size:14px; font-weight:600; color:inherit; margin:20px 0 6px; }}
 .muted {{ color:var(--muted); }} .note {{ color:var(--text2); font-size:13px; margin:4px 0; }}
 .nosel {{ display:none !important; }}
+/* верхняя строка: время обновления и красная кнопка-пилюля */
+.topbar {{ display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-top:14px; }}
+.topbar .muted {{ flex:1 1 260px; font-size:14px; }}
+.topbar .muted b {{ color:var(--text); font-weight:700; }}
+.refresh svg {{ vertical-align:-3px; margin-right:4px; }}
+.refresh {{ flex:none; background:var(--accent); color:var(--accent-text); text-decoration:none; font-weight:700; font-size:14px;
+  padding:11px 18px; border-radius:999px; box-shadow:0 8px 20px -10px var(--accent); }}
+.refresh:active {{ transform:scale(.97); }}
+.hint {{ margin-top:12px; padding:12px 14px; border-radius:16px; background:var(--card); color:var(--text2); font-size:14px; }}
+h2.section {{ font-size:20px; font-weight:600; margin:30px 0 4px; }}
+/* карточки заправок — как строки «Transactions history» */
+.card {{ background:var(--card); border-radius:22px; padding:16px; margin-top:12px; box-shadow:var(--shadow); }}
 .card .nodata {{ display:none; }} .card.empty .nodata {{ display:block; }} .card.empty table {{ display:none; }}
-.card {{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-top:14px; }}
-.head {{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; }}
-.badge {{ font-size:13px; font-weight:600; padding:3px 10px; border-radius:999px; color:#fff; white-space:nowrap; }}
-.badge.have {{ background:var(--have); }} .badge.stale {{ background:var(--maybe); }}
-.badge.term {{ background:transparent; color:var(--none); border:1.5px solid var(--none); }}
-.badge.none {{ background:var(--none); }} .badge.unknown {{ background:var(--unknown); }}
+.head {{ display:flex; align-items:center; gap:12px; margin-bottom:12px; }}
+.ico {{ flex:none; width:46px; height:46px; border-radius:14px; background:var(--tile); color:var(--tile-ink); display:grid; place-items:center; }}
+.ttl {{ flex:1; min-width:0; }} .ttl h2 {{ font-size:16px; }}
+.ttl .sub {{ display:block; color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.badge {{ flex:none; font-size:12px; font-weight:700; padding:6px 12px; border-radius:999px; color:#fff; white-space:nowrap; }}
+.badge.have {{ background:var(--have); }} .badge.stale {{ background:#fab219; color:#1b1500; }}
+.badge.term {{ background:transparent; color:var(--none); box-shadow:inset 0 0 0 1.5px var(--none); }}
+.badge.none {{ background:var(--none); }} .badge.unknown {{ background:var(--chip); color:var(--text2); }}
 table {{ width:100%; border-collapse:collapse; font-size:14px; }}
-th {{ text-align:left; color:var(--muted); font-weight:500; padding:4px 6px; border-bottom:1px solid var(--line); }}
-td {{ padding:6px; border-bottom:1px solid var(--line); font-variant-numeric: tabular-nums; }}
-tr.old td {{ opacity:.5; }} .fuel {{ font-weight:600; }} .src {{ color:var(--muted); font-size:13px; }}
+th {{ text-align:left; color:var(--muted); font-weight:500; font-size:12px; padding:6px; border-bottom:1px solid var(--line); }}
+td {{ padding:9px 6px; border-bottom:1px solid var(--line); font-variant-numeric: tabular-nums; }}
+tr:last-child td {{ border-bottom:none; }}
+tr.old td {{ opacity:.5; }} .fuel {{ font-weight:700; }} .src {{ color:var(--muted); font-size:12px; }}
+/* раскрывающиеся списки */
 details {{ margin-top:10px; }} ul {{ margin:6px 0 0; padding-left:18px; }}
-summary {{ cursor:pointer; color:var(--text2); list-style:none; user-select:none; }}
+summary {{ cursor:pointer; color:var(--text2); font-weight:600; font-size:14px; list-style:none; user-select:none; padding:4px 0; }}
 summary::-webkit-details-marker {{ display:none; }}
-summary::before {{ content:"▸"; display:inline-block; width:1em; transition:transform .22s ease; }}
+summary::before {{ content:"›"; display:inline-block; width:1em; font-size:18px; line-height:1; transition:transform .22s ease; }}
 details[open] > summary::before {{ transform:rotate(90deg); }}
 details > .dc {{ overflow:hidden; will-change:height, opacity; }}
+.hist li {{ margin:3px 0; color:var(--text2); }}
 @media (prefers-reduced-motion: reduce) {{ summary::before {{ transition:none; }} }}
-h2.section {{ font-size:19px; margin:28px 0 2px; }}
-.topbar {{ display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; }}
-.topbar .muted {{ flex:1 1 300px; }}
-.refresh {{ flex:none; background:var(--yes); color:#fff; text-decoration:none; font-weight:600; font-size:14px;
-  padding:8px 14px; border-radius:10px; }}
-.refresh:active {{ opacity:.8; }}
-.hint {{ margin-top:10px; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--card);
-  color:var(--text2); font-size:14px; }}
-.legend {{ display:flex; flex-wrap:wrap; gap:6px 14px; font-size:13px; color:var(--text2); margin:8px 0 0; }}
-.legend.stations {{ margin:0 0 10px; }}
-.k {{ display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; }}
-.k.sw {{ background:var(--c); }} .k.track {{ background:var(--track); border:1px solid var(--line); }}
-.k.sample {{ background:linear-gradient(90deg, var(--s1) 33%, var(--s2) 33% 66%, var(--s3) 66%); }} .k.weak {{ opacity:.45; }}
-.k.off {{ background:var(--off); }}
-.chart {{ width:100%; height:auto; display:block; }} .stats .chart {{ max-width:560px; }} .scroll {{ overflow-x:auto; }}
-.chart .grid {{ stroke:var(--line); stroke-width:1; }}
-.chart .tick {{ fill:var(--muted); font-size:11px; font-variant-numeric: tabular-nums; }}
-.chart .label {{ fill:var(--text2); font-size:11.5px; }}
-.chart .track {{ fill:var(--track); }}
-.s-have {{ fill:#0ca30c; background:#0ca30c; }} .s-stale {{ fill:#fab219; background:#fab219; }}
-.s-term {{ fill:#ec835a; background:#ec835a; }} .s-none {{ fill:#d03b3b; background:#d03b3b; }}
-.s-unknown {{ fill:var(--nodata); background:var(--nodata); }}
-.chart .brand {{ fill:var(--muted); font-size:10px; }}
-.chart .cell:hover, .chart .cell:focus, .chart .seg:hover, .chart .seg:focus {{ stroke:var(--text); stroke-width:1.5; outline:none; }}
-.events {{ list-style:none; padding:0; margin:6px 0 0; }} .events li {{ padding:4px 0; border-bottom:1px solid var(--line); }}
-.events .k {{ margin:0 6px 0 8px; width:10px; height:10px; }}
-.ev-on {{ font-weight:600; }} .ev-off {{ color:var(--none); }}
-.card > table.est {{ table-layout:auto; }} .card > table.est th {{ width:auto; font-size:12px; }}
-.est td {{ vertical-align:top; }} .est td:first-child {{ width:34%; }} .est small {{ display:block; color:var(--muted); font-size:12px; }}
-.hours td, .hours th {{ text-align:center; white-space:nowrap; }} .hours td:first-child, .hours th:first-child {{ text-align:left; }}
+/* статусы в таблицах */
 .st-q {{ color:var(--maybe); font-weight:800; font-size:1.1em; cursor:help; }}
-.st-qr {{ color:var(--none); font-weight:800; font-size:1.1em; cursor:help; }} .st-no {{ color:var(--none); font-weight:600; }}
-.st-yes {{ color:var(--have); font-weight:600; }}
-.prices {{ margin:10px 0 0; font-size:14px; color:var(--text2); display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }}
-.prices .chip b {{ color:var(--text); }} .p-up {{ color:var(--none); font-size:12px; }} .p-down {{ color:var(--have); font-size:12px; }}
+.st-qr {{ color:var(--none); font-weight:800; font-size:1.1em; cursor:help; }} .st-no {{ color:var(--none); font-weight:700; }}
+.st-yes {{ color:var(--have); font-weight:700; }}
+/* цены — пилюли */
+.prices {{ margin:12px 0 0; font-size:13px; color:var(--muted); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }}
+.prices .chip {{ background:var(--chip); color:var(--text2); border-radius:999px; padding:5px 11px; }}
+.prices .chip b {{ color:var(--text); font-weight:700; }} .p-up {{ color:var(--none); font-size:12px; }} .p-down {{ color:var(--have); font-size:12px; }}
 .card > table:not(.tbl) {{ table-layout:fixed; }}
 .card > table:not(.tbl) th:nth-child(1) {{ width:16%; }} .card > table:not(.tbl) th:nth-child(2) {{ width:14%; }}
 .card > table:not(.tbl) th:nth-child(3) {{ width:20%; }} .card > table:not(.tbl) th:nth-child(4) {{ width:20%; }}
-.tbl td, .tbl th {{ padding:3px 6px; font-size:13px; }}
-#tip {{ position:fixed; pointer-events:none; background:var(--card); color:var(--text); border:1px solid var(--line);
-  border-radius:8px; padding:6px 9px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,.15); display:none; max-width:280px; z-index:10; white-space:pre-line; }}
+/* статистика — тёмная панель, как карточка с графиком на макете */
+.card.stats {{ background:var(--panel); color:var(--panel-text); padding:18px 16px;
+  --text:var(--panel-text); --text2:var(--panel-text2); --muted:var(--panel-muted); --line:var(--panel-line); --nodata:var(--panel-nodata); }}
+.legend {{ display:flex; flex-wrap:wrap; gap:6px 14px; font-size:13px; color:var(--text2); margin:8px 0 6px; }}
+.k {{ display:inline-block; width:12px; height:12px; border-radius:4px; margin-right:6px; vertical-align:-1px; }}
+.k.track {{ background:var(--track); }} .k.off {{ background:var(--off); }}
+.chart {{ width:100%; height:auto; display:block; }} .stats .chart {{ max-width:560px; }} .scroll {{ overflow-x:auto; }}
+.chart .grid {{ stroke:var(--line); stroke-width:1; }}
+.chart .tick {{ fill:var(--muted); font-size:11px; font-variant-numeric: tabular-nums; font-family:inherit; }}
+.chart .label {{ fill:var(--text2); font-size:11.5px; font-weight:600; }}
+.chart .brand {{ fill:var(--muted); font-size:10px; }}
+.chart .track {{ fill:var(--track); }}
+.s-have {{ fill:#22b14c; background:#22b14c; }} .s-stale {{ fill:#fab219; background:#fab219; }}
+.s-term {{ fill:#f08452; background:#f08452; }} .s-none {{ fill:#e5483d; background:#e5483d; }}
+.s-unknown {{ fill:var(--nodata); background:var(--nodata); }}
+.chart .cell:hover, .chart .cell:focus, .chart .seg:hover, .chart .seg:focus {{ stroke:var(--text); stroke-width:1.5; outline:none; }}
+.events {{ list-style:none; padding:0; margin:6px 0 0; }} .events li {{ padding:7px 0; border-bottom:1px solid var(--line); font-size:14px; }}
+.events li:last-child {{ border-bottom:none; }}
+.ev-on {{ font-weight:700; color:#22b14c; }} .ev-off {{ color:#f0645a; }}
+.card > table.est {{ table-layout:auto; }} .card > table.est th {{ width:auto; }}
+.est td {{ vertical-align:top; }} .est td:first-child {{ width:34%; font-weight:600; }} .est small {{ display:block; color:var(--muted); font-size:12px; }}
+.hours td, .hours th {{ text-align:center; white-space:nowrap; }} .hours td:first-child, .hours th:first-child {{ text-align:left; }}
+.tbl td, .tbl th {{ padding:5px 6px; font-size:13px; }}
+.foot {{ margin-top:22px; font-size:13px; color:var(--muted); }}
+#tip {{ position:fixed; pointer-events:none; background:var(--raise); color:var(--text); border-radius:12px;
+  padding:8px 11px; font-size:13px; box-shadow:0 10px 30px -10px rgba(0,0,0,.35); display:none; max-width:280px; z-index:10; white-space:pre-line; }}
 @media (max-width:560px) {{ .card > table:not(.tbl) th:nth-child(5), .card > table:not(.tbl) td:nth-child(5) {{ display:none; }} }}
 </style></head><body data-updated="{now.isoformat()}"><main>
-<h1>⛽ Бензин · <span id="ftitle">{fuels_title(DEFAULT_FUELS)}</span></h1>
+<h1>Сводка, <b id="ftitle">{fuels_title(DEFAULT_FUELS)}</b></h1>
 <div class="topbar">
   <div class="muted">Обновлено <b id="updated">{now:%d.%m.%Y в %H:%M}</b> <span id="ago"></span>.
   Сбор с 7:00 до 24:00 каждые 10 минут, ночью не ведётся.</div>
-  <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener">🔄 Обновить сейчас</a>
+  <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg> Обновить сейчас</a>
   <div class="muted nosel" id="refresh-bot">Обновить данные — кнопка «🔄 Обновить» в боте.</div>
 </div>
 <div class="hint" id="hint" hidden>Нажмите <b>Run workflow</b> на GitHub. Примерно через 1–2 минуты эта страница обновится сама.
@@ -1233,16 +1286,15 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
 <p class="hint nosel" id="empty-sel">Вы ещё не выбрали заправки — нажмите «📍 Заправки» в боте.</p>
 <div id="cards">{"".join(cards)}</div>
 <h2 class="section">Статистика: когда привозят и когда заканчивается</h2>
-<div class="muted">Все выбранные заправки на общих графиках, у каждой свой цвет.
-Наведите на график или нажмите на него, чтобы увидеть подробности.</div>
+<div class="muted">Цвет — состояние: есть, давно не подтверждали, только терминал, нет, нет информации.
+Нажмите на график, чтобы увидеть подробности.</div>
 <p class="note nosel" id="fnote">Статистика по вашему набору марок появится при следующем обновлении страницы (до 10 минут); пока показана по АИ-95/98.</p>
 {blocks}
-<p class="muted" style="margin-top:20px">💰 «Ориентир» — ориентировочная цена из отчётов водителей (обычно одинакова для всей сети);
+<p class="foot">💰 «Ориентир» — ориентировочная цена из отчётов водителей (обычно одинакова для всей сети);
 ↑ — подорожало, ↓ — подешевело с указанной даты. «Водитель» — отчёт водителя с заправки. «Общая сводка» — подтверждённые данные за последний час.
 «Терминалы оплаты» — топливо продаётся по данным касс, но водители ещё не подтвердили; если рядом по времени есть отчёт водителя, в статистике учитывается он.
 Состояние считается неизменным до следующего отчёта, но не дольше 2 часов; дальше — «нет данных».</p>
 </main><div id="tip" role="tooltip"></div>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
 // свои заправки (?s=код,код,…) и марки (?f=92,95,…): показываем только их
 const params = new URLSearchParams(location.search);
@@ -1318,7 +1370,11 @@ document.getElementById('refresh').addEventListener('click', e => {{
   const tg = window.Telegram && Telegram.WebApp;
   if (tg && tg.initData) {{ e.preventDefault(); tg.openLink(e.currentTarget.href); }}
 }});
-if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) Telegram.WebApp.ready();
+if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) {{
+  const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  try {{ Telegram.WebApp.setHeaderColor(bg); Telegram.WebApp.setBackgroundColor(bg); }} catch (e) {{}}
+  Telegram.WebApp.ready();
+}}
 // плавное раскрытие и сворачивание списков. Высоту фиксируем до старта анимации и держим до конца —
 // иначе в первом/последнем кадре мелькает полный список.
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
