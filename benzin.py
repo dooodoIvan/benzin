@@ -1264,7 +1264,7 @@ h2.section {{ font-size:20px; font-weight:600; margin:30px 0 4px; }}
 .badge {{ flex:none; font-size:12px; font-weight:700; padding:6px 12px; border-radius:999px; color:#fff; white-space:nowrap; }}
 .badge.have {{ background:#22b14c; }} .badge.stale {{ background:#fab219; color:#1b1500; }}
 .badge.term {{ background:#f08452; color:#1f0d03; }}
-.badge.none {{ background:#e5483d; }} .badge.unknown {{ background:var(--chip); color:var(--text2); }}
+.badge.none {{ background:#e5483d; color:#200806; }} .badge.unknown {{ background:var(--chip); color:var(--text2); }}
 table {{ width:100%; border-collapse:collapse; font-size:14px; }}
 th {{ text-align:left; color:var(--muted); font-weight:500; font-size:12px; padding:6px; border-bottom:1px solid var(--line); }}
 td {{ padding:9px 6px; border-bottom:1px solid var(--line); font-variant-numeric: tabular-nums; }}
