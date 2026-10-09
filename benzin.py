@@ -869,7 +869,8 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
   Данные из канала @voronezh_benzin. Сбор: 12–18 ч каждые 45 мин, 18–24 ч каждые 10 мин, ночью и утром не ведётся. Бледные строки — старше суток.</div>
   <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener">🔄 Обновить сейчас</a>
 </div>
-<div class="hint" id="hint" hidden>Нажмите <b>Run workflow</b> на GitHub. Примерно через 1–2 минуты эта страница обновится сама.</div>
+<div class="hint" id="hint" hidden>Нажмите <b>Run workflow</b> на GitHub. Примерно через 1–2 минуты эта страница обновится сама.
+Если на GitHub запрос отметится как «Cancelled» — это нормально: сервер уже выполнил сбор.</div>
 <h2 class="section">Сводка сейчас</h2>
 {"".join(cards)}
 <h2 class="section">Статистика: когда привозят и когда заканчивается</h2>
