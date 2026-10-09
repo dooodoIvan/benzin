@@ -143,5 +143,17 @@
  },
  "c93502|92": {
   "state": "term"
+ },
+ "1400f4|95": {
+  "state": "term"
+ },
+ "1400f4|98": {
+  "state": "stale"
+ },
+ "ca3966|95": {
+  "state": "term"
+ },
+ "ca3966|98": {
+  "state": "unknown"
  }
 }
