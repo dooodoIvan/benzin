@@ -55,7 +55,30 @@ ALIASES = [
 ]
 MAX_STATIONS = 8  # столько цветов хорошо различимы на графиках
 CATALOG_DAYS = 30  # в списке для выбора — заправки, о которых канал писал за последние 30 дней
-FUELS = ["95", "98"]  # интересующие марки (95+ / Pulsar не учитываем)
+FUEL_CHOICES = ["92", "95", "95+", "98", "100", "ДТ"]  # марки, о которых пишет канал
+DEFAULT_FUELS = ["95", "98"]  # марки по умолчанию (пока пользователь не выбрал свои в /fuels)
+FUEL_RU = {"92": "АИ-92", "95": "АИ-95", "95+": "АИ-95+", "98": "АИ-98", "100": "АИ-100", "ДТ": "ДТ"}
+
+
+def fuel_name(fuel):
+    return FUEL_RU.get(fuel, fuel)
+
+
+def fuels_title(fuels):
+    """["92", "95", "ДТ"] → «АИ-92/95, ДТ»."""
+    ai = [f for f in FUEL_CHOICES if f in fuels and f != "ДТ"]
+    parts = (["АИ-" + "/".join(ai)] if ai else []) + (["ДТ"] if "ДТ" in fuels else [])
+    return ", ".join(parts)
+
+
+def fuels_or(fuels):
+    """«АИ-95 или АИ-98»."""
+    names = [fuel_name(f) for f in FUEL_CHOICES if f in fuels]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " или " + names[-1]
+
+
+def is_petrol(fuels):
+    return any(f != "ДТ" for f in fuels)
 FRESH = timedelta(hours=24)  # старше — считаем «нет свежих данных»
 CONFIRM_FRESH = timedelta(hours=2)  # «есть» старше 2 часов показываем жёлтым «?»
 ALERT_COOLDOWN = timedelta(hours=1)  # защита от «мигания» есть/нет: по одной заправке не чаще раза в час
@@ -370,15 +393,16 @@ def latest_state(db, sids):
         for seen_at, fuel, avail, status, kind, queue in db.execute(
                 "SELECT seen_at, fuel, available, status, kind, queue FROM obs WHERE address = ? AND seen_at >= ? "
                 "ORDER BY seen_at", (address, since)):
-            if fuel in FUELS:
+            if fuel in FUEL_CHOICES:
                 latest[sid][fuel] = (datetime.fromisoformat(seen_at), avail, status, queue, kind)
     return latest
 
 
-def station_state(fuels, now):
-    """Состояние заправки → (css-класс, подпись, ранг для сортировки, время последних данных).
+def station_state(fuels, now, wanted=None):
+    """Состояние заправки по маркам wanted → (css-класс, подпись, ранг для сортировки, время последних данных).
     Ранги: 0 есть (≤2 ч), 1 «есть» было давно, 2 только терминал, 3 нет, 4 нет данных."""
-    fresh = {f: v for f, v in fuels.items() if now - v[0] <= FRESH}
+    wanted = wanted or DEFAULT_FUELS
+    fresh = {f: v for f, v in fuels.items() if f in wanted and now - v[0] <= FRESH}
     yes = [v[0] for v in fresh.values() if v[1] and v[4] != "signal"]
     term = [v[0] for v in fresh.values() if v[1] and v[4] == "signal"]
     if yes and now - max(yes) <= CONFIRM_FRESH:
@@ -398,9 +422,9 @@ def when_text(t, now):
     return f"в {t:%H:%M}" if days == 0 else f"вчера в {t:%H:%M}" if days == 1 else f"{t:%d.%m} в {t:%H:%M}"
 
 
-def ordered_stations(db, now, sids):
+def ordered_stations(db, now, sids, wanted=None):
     """Заправки по порядку: где бензин есть (свежее выше) → было давно → терминал → нет → без данных."""
-    rows = [(sid, fuels, station_state(fuels, now)) for sid, fuels in latest_state(db, sids).items()]
+    rows = [(sid, fuels, station_state(fuels, now, wanted)) for sid, fuels in latest_state(db, sids).items()]
     return sorted(rows, key=lambda r: (r[2][2], -(r[2][3].timestamp() if r[2][3] else 0)))
 
 
@@ -414,46 +438,46 @@ def cmd_status(args, db=None):
             print(f"{name}: данных пока нет")
             continue
         print(name)
-        for fuel in FUELS:
+        for fuel in DEFAULT_FUELS:
             if fuel in fuels:
                 seen_at, avail, status, queue, kind = fuels[fuel]
                 mark = "🟡" if kind == "signal" else ("🟢" if avail else "🔴")
-                print(f"  {mark} АИ-{fuel}: {status_word(avail, kind, seen_at, now)} — {seen_at:%d.%m %H:%M} ({KIND_RU[kind]})"
+                print(f"  {mark} {fuel_name(fuel)}: {status_word(avail, kind, seen_at, now)} — {seen_at:%d.%m %H:%M} ({KIND_RU[kind]})"
                       + (f", очередь {queue}" if queue else ""))
 
 
-def notify_text(db, sids=None):
+def notify_text(db, sids=None, wanted=None):
     """→ (заголовок, текст): заправки сгруппированы по состоянию, чтобы влезть в несколько строк уведомления."""
     now = datetime.now(MSK)
     if not REG:
         load_registry(db)
-    sids = sids or default_sids()
+    sids, wanted = sids or default_sids(), wanted or DEFAULT_FUELS
     groups = {"have": [], "stale": [], "term": [], "none": [], "unknown": []}
-    for sid, fuels, (cls, label, _, when) in ordered_stations(db, now, sids):
+    for sid, fuels, (cls, label, _, when) in ordered_stations(db, now, sids, wanted):
         short = REG[sid]["short"]
         groups[cls].append(f"{short} ({when:%H:%M})" if when else short)
     heads = {"have": "✅ Есть", "stale": "🟡 Было давно", "term": "❓ Терминал", "none": "❌ Нет", "unknown": "⚪ Нет данных"}
     lines = [f"{heads[c]}: " + ", ".join(v) for c, v in groups.items() if v]
-    title = f"⛽ АИ-95/98 · {now:%H:%M} · есть на {len(groups['have'])} из {len(sids)}"
+    title = f"⛽ {fuels_title(wanted)} · {now:%H:%M} · есть на {len(groups['have'])} из {len(sids)}"
     return title, "\n".join(lines)
 
 
 # ---------- Telegram ----------
 
-def telegram_text(db, sids):
+def telegram_text(db, sids, wanted):
     """Подробная сводка для Telegram (HTML-разметка)."""
     now = datetime.now(MSK)
-    title, _ = notify_text(db, sids)
+    title, _ = notify_text(db, sids, wanted)
     icons = {"have": "✅", "stale": "🟡", "term": "❓", "none": "❌", "unknown": "⚪"}
     parts = [f"<b>{html.escape(title)}</b>"]
-    for sid, fuels, (cls, label, _, _) in ordered_stations(db, now, sids):
+    for sid, fuels, (cls, label, _, _) in ordered_stations(db, now, sids, wanted):
         lines = [f"{icons[cls]} <b>{html.escape(REG[sid]['name'])}</b> — {label}"]
-        for fuel in FUELS:
-            if fuel in fuels and now - fuels[fuel][0] <= FRESH:
+        for fuel in FUEL_CHOICES:
+            if fuel in wanted and fuel in fuels and now - fuels[fuel][0] <= FRESH:
                 seen_at, avail, _, queue, kind = fuels[fuel]
-                lines.append(f"   АИ-{fuel}: {status_word(avail, kind, seen_at, now)}, {seen_at:%H:%M} ({KIND_RU[kind]})"
+                lines.append(f"   {fuel_name(fuel)}: {status_word(avail, kind, seen_at, now)}, {seen_at:%H:%M} ({KIND_RU[kind]})"
                              + (f", очередь {html.escape(queue)}" if queue else ""))
-        forecast = short_forecast(db, sid, now)
+        forecast = short_forecast(db, sid, now, wanted)
         if forecast:
             lines.append(f"   📊 {forecast}")
         parts.append("\n".join(lines))
@@ -467,21 +491,27 @@ def tg_call(token, method, timeout=30, **params):
         return json.load(resp)
 
 
-def page_url(sids=None):
-    """Адрес сводки со своими заправками: ?s=код,код,…"""
-    return PAGE_URL + (f"?s={','.join(sids)}" if sids else "")
+def page_url(sids=None, fuels=None):
+    """Адрес сводки со своими заправками и марками: ?s=код,код,…&f=92,95"""
+    params = []
+    if sids:
+        params.append("s=" + ",".join(sids))
+    if fuels and list(fuels) != DEFAULT_FUELS:
+        params.append("f=" + urllib.parse.quote(",".join(fuels), safe=","))
+    return PAGE_URL + ("?" + "&".join(params) if params else "")
 
 
-def page_button(now, sids=None):
+def page_button(now, sids=None, fuels=None):
     """Кнопка под сообщением: открывает сводку внутри Telegram (t= — чтобы не показывалась старая копия)."""
-    url = page_url(sids) + ("&" if sids else "?") + f"t={now:%m%d%H%M}"
+    url = page_url(sids, fuels)
+    url += ("&" if "?" in url else "?") + f"t={now:%m%d%H%M}"
     return json.dumps({"inline_keyboard": [[{"text": "⛽ Открыть сводку", "web_app": {"url": url}}]]})
 
 
-def set_menu_button(token, chat_id, sids=None):
-    """Постоянная кнопка «⛽ Сводка» рядом с полем ввода — открывает сводку со своими заправками."""
+def set_menu_button(token, chat_id, sids=None, fuels=None):
+    """Постоянная кнопка «⛽ Сводка» рядом с полем ввода — открывает сводку со своими заправками и марками."""
     tg_call(token, "setChatMenuButton", chat_id=chat_id, menu_button=json.dumps(
-        {"type": "web_app", "text": "⛽ Сводка", "web_app": {"url": page_url(sids)}}))
+        {"type": "web_app", "text": "⛽ Сводка", "web_app": {"url": page_url(sids, fuels)}}))
 
 
 def tg_chat_id(token):
@@ -493,39 +523,35 @@ def tg_chat_id(token):
     return None
 
 
-def available_now(fuels, now):
-    """Марки, которые водители или сводка канала подтвердили как «есть» не больше 2 часов назад."""
-    return {f: v for f, v in fuels.items()
-            if v[1] and v[4] != "signal" and now - v[0] <= CONFIRM_FRESH}
-
-
-def alert_text(db, items, now):
-    lines = ["<b>⛽ Появился бензин</b>"]
-    for sid, fuels in items:
+def alert_text(db, items, now, wanted):
+    """items: [(sid, [марка…])] — где только что появилось нужное топливо."""
+    fuels_all = {f for _, fs in items for f in fs}
+    lines = ["<b>⛽ Появился бензин</b>" if not ("ДТ" in fuels_all and len(fuels_all) == 1) else "<b>⛽ Появилось дизельное топливо</b>"]
+    latest = latest_state(db, [sid for sid, _ in items])
+    for sid, fs in items:
         parts = []
-        for fuel in FUELS:
-            if fuel in fuels:
-                seen_at, _, _, queue, kind = fuels[fuel]
-                parts.append(f"АИ-{fuel} есть ({seen_at:%H:%M}, {KIND_RU[kind]}"
+        for fuel in FUEL_CHOICES:
+            if fuel in fs and fuel in latest[sid]:
+                seen_at, _, _, queue, kind = latest[sid][fuel]
+                parts.append(f"{fuel_name(fuel)} есть ({seen_at:%H:%M}, {KIND_RU[kind]}"
                              + (f", очередь {html.escape(queue)}" if queue else "") + ")")
         lines.append(f"\n✅ <b>{html.escape(REG[sid]['name'])}</b>\n   " + "; ".join(parts))
-        st = station_stats(db, sid, now)
+        st = station_stats(db, sid, now, wanted)
         if st and median_duration(st["durations"]):
             lines.append(f"   📊 обычно держится около {median_duration(st['durations'])}")
     return "\n".join(lines)
 
 
 def all_selections():
-    """→ [(chat_id, [sid…])] для владельца и подписчиков (если ключ шифрования доступен)."""
+    """→ [(chat_id, [sid…], [марка…])] для владельца и подписчиков (если ключ шифрования доступен)."""
     owner = owner_id()
     try:
         subs = load_subs() if os.environ.get("SUBSCRIBERS_KEY") else empty_subs()
     except Exception as e:
         print(f"подписчики недоступны: {e}", file=sys.stderr)
         subs = empty_subs()
-    out = [(owner, selection(subs, owner))] if owner else []
-    out += [(cid, selection(subs, cid)) for cid in subs["subscribers"] if cid != owner]
-    return out
+    ids = ([owner] if owner else []) + [cid for cid in subs["subscribers"] if cid != owner]
+    return [(cid, selection(subs, cid), fuel_selection(subs, cid)) for cid in ids]
 
 
 def cmd_telegram(args):
@@ -539,43 +565,47 @@ def cmd_telegram(args):
     load_registry(db)
     now = datetime.now(MSK)
     if not args.alerts:
-        sids = selection(load_subs() if os.environ.get("SUBSCRIBERS_KEY") else empty_subs(), owner)
-        tg_call(token, "sendMessage", chat_id=owner, text=telegram_text(db, sids), parse_mode="HTML",
-                disable_web_page_preview="true", reply_markup=page_button(now, sids))
+        subs = load_subs() if os.environ.get("SUBSCRIBERS_KEY") else empty_subs()
+        sids, fuels = selection(subs, owner), fuel_selection(subs, owner)
+        tg_call(token, "sendMessage", chat_id=owner, text=telegram_text(db, sids, fuels), parse_mode="HTML",
+                disable_web_page_preview="true", reply_markup=page_button(now, sids, fuels))
         print("сводка отправлена в Telegram", file=sys.stderr)
         return
 
+    # Состояние отслеживается отдельно для каждой пары «заправка + марка»: кому нужен АИ-92,
+    # тот узнает о появлении АИ-92, даже если АИ-95 там не было.
     people = all_selections()
-    watched = sorted({sid for _, sids in people for sid in sids})
+    pairs = sorted({(sid, f) for _, sids, fuels in people for sid in sids for f in fuels})
     state = json.loads(TG_ALERTS_FILE.read_text()) if TG_ALERTS_FILE.exists() else {}
-    silent = state.get("_v") != 2  # первый запуск нового формата: только запоминаем, без оповещений
-    if silent:
-        state = {"_v": 2}
-    latest = latest_state(db, watched)
-    appeared = []
-    for sid in watched:
-        cls = station_state(latest[sid], now)[0]
-        prev = state.get(sid, {})
+    if state.get("_v") != 3:  # первый запуск нового формата: только запоминаем, без оповещений
+        state = {"_v": 3, "_silent": True}
+    silent = state.pop("_silent", False)
+    latest = latest_state(db, sorted({sid for sid, _ in pairs}))
+    appeared = set()
+    for sid, fuel in pairs:
+        key = f"{sid}|{fuel}"
+        cls = station_state(latest[sid], now, [fuel])[0]
+        prev = state.get(key, {})
         last_alert = datetime.fromisoformat(prev["last_alert"]) if prev.get("last_alert") else None
-        # пишем только при переходе в «есть»; «было давно» → «есть» — бензин не пропадал, молчим
+        # пишем только при переходе в «есть»; «было давно» → «есть» — топливо не пропадало, молчим
         if (not silent and cls == "have" and prev.get("state") not in ("have", "stale", None)
                 and (not last_alert or now - last_alert >= ALERT_COOLDOWN)):
-            appeared.append(sid)
+            appeared.add((sid, fuel))
             prev["last_alert"] = now.isoformat()
         prev["state"] = cls
-        state[sid] = prev
-    for cid, sids in people:
-        mine = [sid for sid in sids if sid in appeared]
-        if not mine:
+        state[key] = prev
+    for cid, sids, fuels in people:
+        items = [(sid, [f for f in fuels if (sid, f) in appeared]) for sid in sids]
+        items = [(sid, fs) for sid, fs in items if fs]
+        if not items:
             continue
         try:
             tg_call(token, "sendMessage", chat_id=cid, parse_mode="HTML", disable_web_page_preview="true",
-                    text=alert_text(db, [(sid, available_now(latest[sid], now)) for sid in mine], now),
-                    reply_markup=page_button(now, sids))
+                    text=alert_text(db, items, now, fuels), reply_markup=page_button(now, sids, fuels))
         except Exception as e:  # например, подписчик заблокировал бота
             print(f"не удалось отправить …{cid[-4:]}: {e}", file=sys.stderr)
-    print(("оповещение: " + ", ".join(REG[s]["short"] for s in appeared)) if appeared else "новых появлений нет",
-          file=sys.stderr)
+    print(("оповещение: " + ", ".join(f"{REG[s]['short']} {fuel_name(f)}" for s, f in sorted(appeared)))
+          if appeared else "новых появлений нет", file=sys.stderr)
     TG_ALERTS_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1))
 
 
@@ -615,11 +645,11 @@ def intervals(series, now):
     return out
 
 
-def station_timeline(db, sid, now):
-    """Наличие «нужного бензина» (АИ-95 или 98) на заправке во времени →
+def station_timeline(db, sid, now, fuels):
+    """Наличие нужного топлива (любой из марок fuels) на заправке во времени →
     [(начало, конец, есть?, только_терминалы?)]. Есть, если есть хоть одна из марок; нет — если все известные «нет»."""
     since = now - timedelta(days=STATS_DAYS)
-    per_fuel = [intervals(station_series(db, sid, f, since), now) for f in FUELS]
+    per_fuel = [intervals(station_series(db, sid, f, since), now) for f in fuels]
     bounds = sorted({t for iv in per_fuel for s, e, _, _ in iv for t in (s, e)})
     out = []
     for b0, b1 in zip(bounds, bounds[1:]):
@@ -694,8 +724,8 @@ def fmt_hours(td):
     return f"{h:.0f} ч" if h >= 2 else f"{h * 60:.0f} мин"
 
 
-def station_stats(db, sid, now):
-    timeline = station_timeline(db, sid, now)
+def station_stats(db, sid, now, fuels=None):
+    timeline = station_timeline(db, sid, now, fuels or DEFAULT_FUELS)
     if not timeline:
         return None
     arrivals, runouts, durations = events(timeline)
@@ -709,9 +739,9 @@ def median_duration(durations):
     return fmt_hours(sorted(durations)[len(durations) // 2])
 
 
-def short_forecast(db, sid, now):
-    """Одна строка для Telegram: когда обычно появляется/заканчивается бензин (если данных достаточно)."""
-    st = station_stats(db, sid, now)
+def short_forecast(db, sid, now, fuels=None):
+    """Одна строка для Telegram: когда обычно появляется/заканчивается топливо (если данных достаточно)."""
+    st = station_stats(db, sid, now, fuels)
     if not st:
         return None
     parts = []
@@ -829,8 +859,8 @@ def events_list(stats, colors, visible, now, limit=40):
             f'когда бензин появился или закончился: нужно больше данных.</p>')
 
 
-def stats_section(db, now, sids, shown):
-    stats = {sid: station_stats(db, sid, now) for sid in sids}
+def stats_section(db, now, sids, shown, fuels):
+    stats = {sid: station_stats(db, sid, now, fuels) for sid in sids}
     colors = {sid: (shown.index(sid) if sid in shown else i) % MAX_STATIONS + 1 for i, sid in enumerate(sids)}
     visible = {sid: sid in shown for sid in sids}
     h0 = first_hour(stats)
@@ -864,6 +894,7 @@ def stats_section(db, now, sids, shown):
             for h in range(h0, 24)) + "</tr>")
     return f"""
 <section class="card stats">
+  <p class="note">«Есть» — есть {fuels_or(fuels)}.</p>
   <div class="legend stations rows">{legend}</div>{note}
   <table class="tbl est"><thead><tr><th>Заправка</th><th>Привозят</th><th>Кончается</th><th>Держится</th></tr></thead>
   <tbody class="rows">{"".join(rows)}</tbody></table>
@@ -882,40 +913,52 @@ def stats_section(db, now, sids, shown):
 
 # ---------- страница со сводкой ----------
 
-def write_report(db, path=None, sids=None):
-    """sids — все заправки, которые должны быть на странице (по умолчанию — заправки владельца).
-    Без параметра ?s= в ссылке показываются заправки по умолчанию."""
+def write_report(db, path=None, sids=None, combos=None):
+    """sids — все заправки, которые должны быть на странице (по умолчанию — заправки владельца);
+    combos — наборы марок, для которых считать статистику (у разных пользователей разные).
+    Без параметров ?s= и ?f= в ссылке показываются заправки и марки по умолчанию."""
     now = datetime.now(MSK)
     esc = html.escape
     load_registry(db)
     shown = default_sids()
     sids = [sid for sid in dict.fromkeys(list(sids or []) + shown) if sid in REG]
+    combos = list(dict.fromkeys([tuple(DEFAULT_FUELS)] + [tuple(c) for c in (combos or [])]))
     since = (now - FRESH).isoformat()
     cards = []
     for sid, fuels, (cls, label, _, _) in ordered_stations(db, now, sids):
-        rows = []
-        for fuel in FUELS:
+        rows, per_fuel = [], {}
+        for fuel in FUEL_CHOICES:
             if fuel in fuels:
                 seen_at, avail, status, queue, kind = fuels[fuel]
+                f_cls, f_label, f_rank, f_when = station_state(fuels, now, [fuel])
+                per_fuel[fuel] = [f_cls, f_label, f_rank, f_when.timestamp() if f_when else 0]
                 old = " old" if now - seen_at > FRESH else ""
+                hide = "" if fuel in DEFAULT_FUELS else " nosel"
                 rows.append(
-                    f'<tr class="{"maybe" if kind == "signal" else "yes" if avail else "no"}{old}"><td class="fuel">АИ-{esc(fuel)}</td>'
+                    f'<tr class="{"maybe" if kind == "signal" else "yes" if avail else "no"}{old}{hide}" data-fuel="{esc(fuel)}">'
+                    f'<td class="fuel">{fuel_name(fuel)}</td>'
                     f'<td>{status_html(avail, kind, seen_at, now)}</td><td>{seen_at:%d.%m %H:%M}</td>'
                     f'<td>{esc(queue or "—")}</td><td class="src">{KIND_RU[kind]}</td></tr>')
+        empty = '<p class="muted nodata">За последние сутки отчётов по выбранным маркам не было.</p>'
         table = ('<table><tr><th>Марка</th><th>Статус</th><th>Когда</th><th>Очередь</th><th>Источник</th></tr>'
-                 + "".join(rows) + "</table>") if rows else '<p class="muted">За последние сутки отчётов по этой заправке не было.</p>'
+                 + "".join(rows) + "</table>" + empty) if rows else empty
         hist = []
         for seen_at, fuel, avail, kind in db.execute(
                 "SELECT seen_at, fuel, available, kind FROM obs WHERE address = ? AND seen_at >= ? ORDER BY seen_at DESC",
                 (REG[sid]["address"], since)):
-            if fuel in FUELS:
+            if fuel in FUEL_CHOICES:
                 t = datetime.fromisoformat(seen_at)
-                hist.append(f'<li><b>{t:%H:%M}</b> АИ-{esc(fuel)} — '
-                            f'{status_html(avail, kind, t, now)} <span class="muted">({KIND_RU[kind]})</span></li>')
-        hist_html = (f'<details><summary>Все отчёты за сутки ({len(hist)})</summary><ul>{"".join(hist[:60])}</ul></details>'
-                     if hist else "")
-        cards.append(f'<section class="card{"" if sid in shown else " nosel"}" data-sid="{sid}"><div class="head">'
+                hide = "" if fuel in DEFAULT_FUELS else ' class="nosel"'
+                hist.append(f'<li data-fuel="{esc(fuel)}"{hide}><b>{t:%H:%M}</b> '
+                            f'{fuel_name(fuel)} — {status_html(avail, kind, t, now)} <span class="muted">({KIND_RU[kind]})</span></li>')
+        hist_html = (f'<details class="hist"><summary>Все отчёты за сутки (<span class="n">0</span>)</summary>'
+                     f'<ul>{"".join(hist[:120])}</ul></details>' if hist else "")
+        cards.append(f'<section class="card st{"" if sid in shown else " nosel"}" data-sid="{sid}" '
+                     f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}"><div class="head">'
                      f'<h2>{esc(REG[sid]["name"])}</h2><span class="badge {cls}">{label}</span></div>{table}{hist_html}</section>')
+    blocks = "".join(
+        f'<div class="fblock{"" if i == 0 else " nosel"}" data-fuels="{esc(",".join(c))}">{stats_section(db, now, sids, shown, list(c))}</div>'
+        for i, c in enumerate(combos))
     palette_light = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
     palette_dark = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
     s_light = " ".join(f"--s{i + 1}:{c};" for i, c in enumerate(palette_light))
@@ -935,6 +978,7 @@ h1 {{ font-size:22px; margin:0 0 4px; }} h2 {{ font-size:17px; margin:0; }}
 h4 {{ font-size:13px; font-weight:600; color:var(--text2); margin:14px 0 2px; }}
 .muted {{ color:var(--muted); }} .note {{ color:var(--text2); font-size:13px; margin:4px 0; }}
 .nosel {{ display:none !important; }}
+.card .nodata {{ display:none; }} .card.empty .nodata {{ display:block; }} .card.empty table {{ display:none; }}
 .card {{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-top:14px; }}
 .head {{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; }}
 .badge {{ font-size:13px; font-weight:600; padding:3px 10px; border-radius:999px; color:#fff; white-space:nowrap; }}
@@ -984,29 +1028,63 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
   border-radius:8px; padding:6px 9px; font-size:13px; box-shadow:0 4px 14px rgba(0,0,0,.15); display:none; max-width:280px; z-index:10; white-space:pre-line; }}
 @media (max-width:560px) {{ .card > table:not(.tbl) th:nth-child(5), .card > table:not(.tbl) td:nth-child(5) {{ display:none; }} }}
 </style></head><body data-updated="{now.isoformat()}"><main>
-<h1>⛽ Бензин · АИ-95 / 98</h1>
+<h1>⛽ Бензин · <span id="ftitle">{fuels_title(DEFAULT_FUELS)}</span></h1>
 <div class="topbar">
   <div class="muted">Обновлено <b id="updated">{now:%d.%m.%Y в %H:%M}</b> <span id="ago"></span>.
   Данные из канала @voronezh_benzin. Сбор с 7:00 до 24:00 каждые 10 минут, ночью не ведётся. Бледные строки — старше суток.
-  Свои заправки выбираются в боте командой /stations.</div>
+  Свои заправки и марки выбираются в боте: /stations и /fuels.</div>
   <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener">🔄 Обновить сейчас</a>
 </div>
 <div class="hint" id="hint" hidden>Нажмите <b>Run workflow</b> на GitHub. Примерно через 1–2 минуты эта страница обновится сама.
 Если на GitHub запрос отметится как «Cancelled» — это нормально: сервер уже выполнил сбор.</div>
 <h2 class="section">Сводка сейчас</h2>
-{"".join(cards)}
+<div id="cards">{"".join(cards)}</div>
 <h2 class="section">Статистика: когда привозят и когда заканчивается</h2>
-<div class="muted">Все выбранные заправки на общих графиках, у каждой свой цвет. «Бензин есть» — есть АИ-95 или АИ-98.
+<div class="muted">Все выбранные заправки на общих графиках, у каждой свой цвет.
 Наведите на график или нажмите на него, чтобы увидеть подробности.</div>
-{stats_section(db, now, sids, shown)}
+<p class="note nosel" id="fnote">Статистика по вашему набору марок появится при следующем обновлении страницы (до 10 минут); пока показана по АИ-95/98.</p>
+{blocks}
 <p class="muted" style="margin-top:20px">«Водитель» — отчёт подписчика с заправки. «Сводка канала» — подтверждённые данные за последний час.
 «Терминалы оплаты» — топливо продаётся по данным касс, но водители ещё не подтвердили; если рядом по времени есть отчёт водителя, в статистике учитывается он.
 Состояние считается неизменным до следующего отчёта, но не дольше 2 часов; дальше — «нет данных».</p>
 </main><div id="tip" role="tooltip"></div>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
-// свои заправки из ссылки ?s=код,код,…: показываем только их и красим по порядку выбора
-const sel = (new URLSearchParams(location.search).get('s') || '').split(',').filter(Boolean);
+// свои заправки (?s=код,код,…) и марки (?f=92,95,…): показываем только их
+const params = new URLSearchParams(location.search);
+const sel = (params.get('s') || '').split(',').filter(Boolean);
+const ALL_FUELS = {json.dumps(FUEL_CHOICES, ensure_ascii=False)};
+const fuels = ((params.get('f') || '').split(',').filter(f => ALL_FUELS.includes(f)));
+const wanted = fuels.length ? ALL_FUELS.filter(f => fuels.includes(f)) : {json.dumps(DEFAULT_FUELS, ensure_ascii=False)};
+if (fuels.length) {{
+  const names = {json.dumps(FUEL_RU, ensure_ascii=False)};
+  const ai = wanted.filter(f => f !== 'ДТ');
+  document.getElementById('ftitle').textContent = [ai.length ? 'АИ-' + ai.join('/') : '', wanted.includes('ДТ') ? 'ДТ' : ''].filter(Boolean).join(', ');
+  document.querySelectorAll('[data-fuel]').forEach(el => el.classList.toggle('nosel', !wanted.includes(el.dataset.fuel)));
+  // статус заправки — по лучшей из выбранных марок (как на сервере): есть → было давно → терминал → нет → нет данных
+  const cards = [...document.querySelectorAll('section.card.st')];
+  cards.forEach(card => {{
+    const st = JSON.parse(card.dataset.st || '{{}}');
+    let best = null;
+    wanted.forEach(f => {{ const v = st[f]; if (v && (!best || v[2] < best[2] || (v[2] === best[2] && v[3] > best[3]))) best = v; }});
+    best = best || ['unknown', 'Нет данных', 4, 0];
+    const badge = card.querySelector('.badge');
+    badge.className = 'badge ' + best[0]; badge.textContent = best[1];
+    card.dataset.rank = best[2]; card.dataset.ts = best[3];
+  }});
+  cards.sort((a, b) => (a.dataset.rank - b.dataset.rank) || (b.dataset.ts - a.dataset.ts))
+       .forEach(c => document.getElementById('cards').appendChild(c));
+  const key = wanted.join(',');
+  const blocks = [...document.querySelectorAll('.fblock')];
+  const match = blocks.find(b => b.dataset.fuels === key);
+  blocks.forEach(b => b.classList.toggle('nosel', b !== (match || blocks[0])));
+  document.getElementById('fnote').classList.toggle('nosel', !!match);
+}}
+document.querySelectorAll('section.card.st').forEach(card => {{
+  card.classList.toggle('empty', !card.querySelector('tr[data-fuel]:not(.nosel)'));
+  const n = card.querySelector('.hist .n');
+  if (n) n.textContent = card.querySelectorAll('.hist li:not(.nosel)').length;
+}});
 if (sel.length) {{
   document.querySelectorAll('[data-sid]').forEach(el => {{
     const i = sel.indexOf(el.dataset.sid);
@@ -1018,7 +1096,7 @@ if (sel.length) {{
       .sort((a, b) => sel.indexOf(a.dataset.sid) - sel.indexOf(b.dataset.sid)).forEach(c => box.appendChild(c));
   }});
 }}
-document.querySelectorAll('.events').forEach(ul => {{
+document.querySelectorAll('.fblock:not(.nosel) .events, .fblock .events').forEach(ul => {{
   const shown = [...ul.children].filter(li => !li.classList.contains('nosel'));
   shown.slice(12).forEach(li => li.classList.add('nosel'));
   if (!shown.length) ul.nextElementSibling.hidden = false;
@@ -1119,6 +1197,17 @@ def selection(subs, cid):
     return clean_selection(entry.get("stations")) or default_sids()
 
 
+def fuel_selection(subs, cid):
+    """Марки пользователя; если он ещё не выбирал — марки по умолчанию."""
+    entry = subs["owner"] if cid == owner_id() else subs["subscribers"].get(cid, {})
+    return [f for f in FUEL_CHOICES if f in (entry.get("fuels") or [])] or list(DEFAULT_FUELS)
+
+
+def set_fuels(subs, cid, fuels):
+    entry = subs["owner"] if cid == owner_id() else subs["subscribers"][cid]
+    entry["fuels"] = fuels
+
+
 def set_selection(subs, cid, sids):
     entry = subs["owner"] if cid == owner_id() else subs["subscribers"][cid]
     entry["stations"] = sids
@@ -1136,8 +1225,8 @@ def say(token, chat_id, text, markup=None):
     return tg_call(token, "sendMessage", **params)
 
 
-HELP_SUB = ("Бот присылает оповещение, когда на ваших заправках появляется АИ-95 или АИ-98.\n"
-            "/stations — выбрать заправки (до 8)\n"
+HELP_SUB = ("Бот присылает оповещение, когда на ваших заправках появляется нужное вам топливо.\n"
+            "/stations — выбрать заправки (до 8)\n/fuels — выбрать марки топлива\n"
             "Сводка со статистикой — кнопка «⛽ Сводка» внизу.\n/stop — отписаться.")
 
 
@@ -1181,7 +1270,8 @@ def stations_view(sids, view):
                 row = []
         if row:
             rows.append(row)
-        rows.append([{"text": f"✔️ Мои ({len(sids)})", "callback_data": "st:my"}, {"text": "Готово", "callback_data": "st:done"}])
+        rows.append([{"text": f"✔️ Мои ({len(sids)})", "callback_data": "st:my"}, {"text": "⛽ Марки", "callback_data": "fu:home"},
+                     {"text": "Готово", "callback_data": "st:done"}])
         text = (f"<b>Ваши заправки</b> ({len(sids)} из {MAX_STATIONS}):\n{chosen_list()}\n\n"
                 "Выберите сеть, чтобы добавить или убрать заправки:")
         return text, rows
@@ -1231,15 +1321,58 @@ def handle_stations_cb(token, cb, subs):
             changed = True
     if changed:
         set_selection(subs, cid, sids)
-        set_menu_button(token, cid, sids)
+        set_menu_button(token, cid, sids, fuel_selection(subs, cid))
     tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"], **({"text": notice, "show_alert": "true"} if notice else {}))
     if parts[1] == "done":
         text = ("✅ Сохранено. Ваши заправки:\n" + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids)
                 + "\n\nОповещения будут приходить по ним, сводка — кнопка «⛽ Сводка» внизу. Изменить — /stations.")
         tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), text=text, parse_mode="HTML",
-                reply_markup=page_button(datetime.now(MSK), sids))
+                reply_markup=page_button(datetime.now(MSK), sids, fuel_selection(subs, cid)))
         return changed
     text, rows = stations_view(sids, view)
+    tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), text=text, parse_mode="HTML",
+            reply_markup=json.dumps({"inline_keyboard": rows}))
+    return changed
+
+
+def fuels_view(fuels):
+    rows, row = [], []
+    for f in FUEL_CHOICES:
+        row.append({"text": f"{'✅' if f in fuels else '▫️'} {fuel_name(f)}{' (Pulsar)' if f == '95+' else ''}",
+                    "callback_data": f"fu:t:{f}"})
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    rows += [row] if row else []
+    rows.append([{"text": "Готово", "callback_data": "fu:done"}])
+    return ("<b>Марки топлива</b> — по ним приходят оповещения и строится сводка.\n"
+            f"Сейчас: {fuels_title(fuels)}. Нажмите, чтобы добавить или убрать:", rows)
+
+
+def handle_fuels_cb(token, cb, subs):
+    cid, data = str(cb["from"]["id"]), cb.get("data", "")
+    msg = cb.get("message", {})
+    if cid != owner_id() and cid not in subs["subscribers"]:
+        tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"], text="Сначала отправьте /start")
+        return False
+    fuels, changed, notice = fuel_selection(subs, cid), False, None
+    if data.startswith("fu:t:"):
+        f = data[5:]
+        if f in fuels and len(fuels) == 1:
+            notice = "Нужна хотя бы одна марка."
+        elif f in FUEL_CHOICES:
+            fuels = [x for x in FUEL_CHOICES if (x in fuels) != (x == f)]
+            changed = True
+    if changed:
+        set_fuels(subs, cid, fuels)
+        set_menu_button(token, cid, selection(subs, cid), fuels)
+    tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"], **({"text": notice, "show_alert": "true"} if notice else {}))
+    if data == "fu:done":
+        tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), parse_mode="HTML",
+                text=f"✅ Сохранено. Марки: {fuels_title(fuels)}.\nОповещения и сводка — по ним. Изменить — /fuels.",
+                reply_markup=page_button(datetime.now(MSK), selection(subs, cid), fuels))
+        return changed
+    text, rows = fuels_view(fuels)
     tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), text=text, parse_mode="HTML",
             reply_markup=json.dumps({"inline_keyboard": rows}))
     return changed
@@ -1257,6 +1390,10 @@ def handle_message(token, msg, subs):
         view_text, rows = stations_view(selection(subs, cid), "home")
         say(token, cid, view_text, {"inline_keyboard": rows})
         return False
+    if text.startswith("/fuels") and (cid == owner or cid in subs["subscribers"]):
+        view_text, rows = fuels_view(fuel_selection(subs, cid))
+        say(token, cid, view_text, {"inline_keyboard": rows})
+        return False
     if cid == owner:
         if text.startswith("/list"):
             if not subs["subscribers"]:
@@ -1266,8 +1403,8 @@ def handle_message(token, msg, subs):
                 say(token, cid, f"👤 {html.escape(info['name'])}, с {info['since'][:10]}, заправок: {n or 'по умолчанию'}",
                     {"inline_keyboard": [[{"text": "❌ Удалить", "callback_data": f"sub:del:{sid}"}]]})
         else:
-            say(token, cid, "Вы владелец бота: оповещения приходят вам и подтверждённым подписчикам — каждому по его заправкам.\n"
-                            "/stations — выбрать свои заправки\n/list — список подписчиков.")
+            say(token, cid, "Вы владелец бота: оповещения приходят вам и подтверждённым подписчикам — каждому по его заправкам и маркам.\n"
+                            "/stations — выбрать свои заправки\n/fuels — выбрать марки топлива\n/list — список подписчиков.")
         return False
     if text.startswith("/stop"):
         if cid in subs["subscribers"]:
@@ -1300,6 +1437,8 @@ def handle_callback(token, cb, subs):
     data = cb.get("data", "")
     if data.startswith("st:"):
         return handle_stations_cb(token, cb, subs)
+    if data.startswith("fu:"):
+        return handle_fuels_cb(token, cb, subs)
     owner = owner_id()
     tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"])
     if str(cb.get("from", {}).get("id")) != owner or not data.startswith("sub:"):
@@ -1317,7 +1456,7 @@ def handle_callback(token, cb, subs):
         set_menu_button(token, cid, sids)
         say(token, cid, "✅ Владелец подтвердил доступ. Сейчас выбраны заправки по умолчанию:\n"
                         + "\n".join(f"• {html.escape(REG[s]['name'])}" for s in sids)
-                        + "\n\nЧтобы выбрать свои, отправьте /stations.\n\n" + HELP_SUB,
+                        + f"\nМарки: {fuels_title(DEFAULT_FUELS)}.\n\nЧтобы выбрать свои заправки — /stations, марки — /fuels.\n\n" + HELP_SUB,
             json.loads(page_button(datetime.now(MSK), sids)))
         done(f"✅ Добавлено в подписчики: {html.escape(info['name'])}.")
         return True
@@ -1347,13 +1486,15 @@ def setup_bot(db):
     load_registry(db)
     tg_call(token, "setMyCommands", commands=json.dumps([
         {"command": "stations", "description": "Выбрать заправки"},
+        {"command": "fuels", "description": "Выбрать марки топлива"},
         {"command": "stop", "description": "Отписаться от оповещений"}]))
     tg_call(token, "setMyCommands", scope=json.dumps({"type": "chat", "chat_id": int(owner)}), commands=json.dumps([
         {"command": "stations", "description": "Выбрать свои заправки"},
+        {"command": "fuels", "description": "Выбрать марки топлива"},
         {"command": "list", "description": "Подписчики"}]))
-    for cid, sids in all_selections():
+    for cid, sids, fuels in all_selections():
         try:
-            set_menu_button(token, cid, sids)
+            set_menu_button(token, cid, sids, fuels)
         except Exception as e:
             print(f"кнопка меню …{cid[-4:]}: {e}", file=sys.stderr)
 
@@ -1449,11 +1590,13 @@ def publish_page(db):
     if not key:
         return
     load_registry(db)
-    watched = list(dict.fromkeys(sid for _, sids in all_selections() for sid in sids))
+    people = all_selections()
+    watched = list(dict.fromkeys(sid for _, sids, _ in people for sid in sids))
+    combos = [tuple(f for f in FUEL_CHOICES if f in fuels) for _, _, fuels in people]
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         page = Path(tmp)
-        write_report(db, page / "index.html", watched)
+        write_report(db, page / "index.html", watched, combos)
         (page / ".nojekyll").write_text("")
         (page / "README.md").write_text("# Бензин · сводка\n\nОбновляется автоматически с 7:00 до 24:00 МСК каждые 10 минут.\n")
         env = {**os.environ, "GIT_SSH_COMMAND": f"ssh -i {key} -o StrictHostKeyChecking=accept-new"}
