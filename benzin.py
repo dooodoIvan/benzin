@@ -1840,6 +1840,98 @@ def answer_refresh():
             print(f"обновление …{cid[-4:]}: {e}", file=sys.stderr)
 
 
+HEALTH_FILE = BASE / "data/health.json"  # когда сервер последний раз работал и удачно читал канал
+HEALTH_GAP = timedelta(minutes=30)      # перерыв дольше — сообщаем владельцу
+CODE_FILES = ["benzin.py", ".github/workflows/collect.yml"]  # их изменение на GitHub = новая версия программы
+
+
+def load_health():
+    try:
+        return json.loads(HEALTH_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def save_health(h):
+    HEALTH_FILE.write_text(json.dumps(h, ensure_ascii=False, indent=1))
+
+
+def notify_owner(text):
+    """Служебное сообщение владельцу бота (сбои сбора и т. п.)."""
+    token, owner = os.environ.get("TELEGRAM_TOKEN"), owner_id()
+    if not token or not owner:
+        return
+    try:
+        tg_call(token, "sendMessage", chat_id=owner, text=text, parse_mode="HTML")
+    except Exception as e:
+        print(f"сообщение владельцу: {e}", file=sys.stderr)
+
+
+def check_gap_on_start(start, ws):
+    """При запуске смены: был ли перерыв в сборе в рабочее время."""
+    h = load_health()
+    last = datetime.fromisoformat(h["alive"]) if h.get("alive") else None
+    if last is None or start < ws:
+        return
+    if last >= ws - timedelta(minutes=10) and start - last > HEALTH_GAP:
+        mins = int((start - last).total_seconds() // 60)
+        notify_owner(f"⚠️ Сбор не работал с {last:%H:%M} до {start:%H:%M} ({mins} мин). Сервер перезапущен автоматически.")
+    elif last < ws and start - ws > HEALTH_GAP:
+        notify_owner(f"⚠️ Сбор сегодня начался только в {start:%H:%M} вместо {WORK_START}:00 — GitHub поздно запустил сервер. "
+                     "Утренние данные за это время не собраны.")
+
+
+def record_collect_result(ok):
+    """Отметка «сервер жив» и учёт сбоев чтения канала; при сбое дольше 30 мин — сообщение владельцу."""
+    now = datetime.now(MSK)
+    h = load_health()
+    h["alive"] = now.isoformat()
+    if ok:
+        if h.get("fail_alerted"):
+            notify_owner(f"✅ Сбор снова работает (канал отвечает с {now:%H:%M}).")
+        h["collected"] = now.isoformat()
+        h.pop("fail_since", None)
+        h.pop("fail_alerted", None)
+    else:
+        h.setdefault("fail_since", now.isoformat())
+        since = datetime.fromisoformat(h["fail_since"])
+        if now - since > HEALTH_GAP and not h.get("fail_alerted"):
+            notify_owner(f"⚠️ Канал @voronezh_benzin не отвечает с {since:%H:%M} — данные не обновляются. "
+                         "Сервер продолжает попытки.")
+            h["fail_alerted"] = True
+    save_health(h)
+
+
+def code_version(ref):
+    """Отпечаток файлов кода в указанной версии хранилища."""
+    return [git("rev-parse", f"{ref}:{f}", check=False).stdout.strip() for f in CODE_FILES]
+
+
+RUNNING_CODE = {"version": None}  # версия кода, с которой запущена смена
+
+
+def new_version_available():
+    """Есть ли на GitHub версия программы новее той, с которой запущена эта смена."""
+    if RUNNING_CODE["version"] is None:
+        RUNNING_CODE["version"] = code_version("HEAD")
+    if git("fetch", "-q", "origin", "main", check=False).returncode != 0:
+        return False
+    latest = code_version("origin/main")
+    return all(latest) and latest != RUNNING_CODE["version"]
+
+
+def dispatch_successor():
+    """Запустить следующую смену (с повторами — сеть иногда подводит)."""
+    for attempt in range(5):
+        try:
+            gh_api("POST", f"actions/workflows/{WORKFLOW}/dispatches", {"ref": "main", "inputs": {"reason": "chain"}})
+            return True
+        except Exception as e:
+            print(f"запуск продолжения: {e}", file=sys.stderr)
+            time.sleep(10 * (attempt + 1))
+    return False
+
+
 def work_once():
     """Один сбор: канал → data/obs.csv → страница → оповещения в Telegram → сохранить в хранилище."""
     t0 = time.time()
@@ -1848,9 +1940,14 @@ def work_once():
         new = collect(db, 4)
         if new:
             save_db(db)
+        ok = True
     except Exception as e:
-        new = 0
+        new, ok = 0, False
         print(f"сбор не удался: {e}", file=sys.stderr)
+    try:
+        record_collect_result(ok)
+    except Exception as e:
+        print(f"здоровье: ошибка {e}", file=sys.stderr)
     load_registry(db)
     for step, fn in (("страница", lambda: publish_page(db)),
                      ("telegram", lambda: cmd_telegram(argparse.Namespace(alerts=True)) if os.environ.get("TELEGRAM_TOKEN") else None),
@@ -1899,11 +1996,23 @@ def cmd_worker(args):
         setup_bot(open_db())
     except Exception as e:
         print(f"бот: не удалось настроить: {e}", file=sys.stderr)
+    try:
+        check_gap_on_start(start, ws)
+    except Exception as e:
+        print(f"проверка перерыва: {e}", file=sys.stderr)
     slots = [s for s in day_slots(ws) if s > start]
     do_now = args.reason == "manual" or start >= ws  # опоздали к началу или нажали кнопку — собираем сразу
-    last_queue_check = 0.0
+    last_queue_check, last_version_check = 0.0, time.time()
+    RUNNING_CODE["version"] = code_version("HEAD")
     while True:
         now = datetime.now(MSK)
+        if time.time() - last_version_check >= 120:
+            last_version_check = time.time()
+            if new_version_available():
+                print("на GitHub новая версия программы — перезапуск", file=sys.stderr, flush=True)
+                save_and_push()
+                if dispatch_successor():
+                    return  # новая смена уже в очереди и стартует с новой версией сразу после этой
         if now >= we or now >= deadline:
             if UNPUSHED["since"]:
                 save_and_push()
@@ -1911,7 +2020,8 @@ def cmd_worker(args):
                 print("рабочий день закончился", file=sys.stderr)
                 return
             # 6-часовой предел GitHub: запускаем продолжение и завершаемся
-            gh_api("POST", f"actions/workflows/{WORKFLOW}/dispatches", {"ref": "main", "inputs": {"reason": "chain"}})
+            if not dispatch_successor():
+                notify_owner("⚠️ Не удалось запустить следующую смену сервера. Попробует «будильник» GitHub в течение нескольких минут.")
             print("запущено продолжение", file=sys.stderr)
             return
         if slots and now >= slots[0]:  # подошло время по расписанию
