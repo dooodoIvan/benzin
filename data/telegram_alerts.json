@@ -30,7 +30,7 @@
   "state": "term"
  },
  "fbe476|98": {
-  "state": "stale"
+  "state": "have"
  },
  "472e11|95+": {
   "state": "have"
@@ -156,6 +156,12 @@
   "state": "term"
  },
  "ca3966|98": {
+  "state": "unknown"
+ },
+ "d0dbe7|95": {
+  "state": "have"
+ },
+ "d0dbe7|98": {
   "state": "unknown"
  }
 }
