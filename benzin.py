@@ -1229,9 +1229,11 @@ tr.old td {{ opacity:.5; }} .fuel {{ font-weight:700; }} .src {{ color:var(--mut
 details {{ margin-top:10px; }} ul {{ margin:6px 0 0; padding-left:18px; }}
 summary {{ cursor:pointer; color:var(--text2); font-weight:600; font-size:14px; list-style:none; user-select:none; padding:4px 0; }}
 summary::-webkit-details-marker {{ display:none; }}
-summary::before {{ content:"›"; display:inline-block; width:1em; font-size:18px; line-height:1; transition:transform .22s ease; }}
+summary::before {{ content:"›"; display:inline-block; width:1em; font-size:18px; line-height:1; text-align:center;
+  transition:transform .4s cubic-bezier(.25,.8,.3,1); }}
 details[open] > summary::before {{ transform:rotate(90deg); }}
-details > .dc {{ overflow:hidden; will-change:height, opacity; }}
+details > .dc {{ overflow:hidden; }}
+details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* содержимое не пересчитывается на каждом кадре */
 .hist li {{ margin:3px 0; color:var(--text2); }}
 @media (prefers-reduced-motion: reduce) {{ summary::before {{ transition:none; }} }}
 /* статусы в таблицах */
@@ -1375,35 +1377,42 @@ if (window.Telegram && Telegram.WebApp && Telegram.WebApp.initData) {{
   try {{ Telegram.WebApp.setHeaderColor(bg); Telegram.WebApp.setBackgroundColor(bg); }} catch (e) {{}}
   Telegram.WebApp.ready();
 }}
-// плавное раскрытие и сворачивание списков. Высоту фиксируем до старта анимации и держим до конца —
-// иначе в первом/последнем кадре мелькает полный список.
+// плавное раскрытие и сворачивание списков: блок меняет высоту, а содержимое внутри отдельно
+// проявляется и «опускается» на место. Высоту фиксируем до старта и держим до конца — без мелькания.
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const EASE_OUT = 'cubic-bezier(.25,.8,.3,1)', EASE_IN_OUT = 'cubic-bezier(.45,0,.25,1)';
 document.querySelectorAll('details').forEach(d => {{
   const s = d.querySelector(':scope > summary'), c = d.querySelector(':scope > .dc');
   if (!s || !c || reduceMotion) return;
-  let anim = null;
-  const reset = () => {{ c.style.height = ''; c.style.opacity = ''; }};
+  const inner = c.firstElementChild;
+  let anims = [];
+  const stop = () => {{ anims.forEach(a => a.cancel()); anims = []; }};
+  const reset = () => {{ c.style.height = ''; inner.style.opacity = ''; inner.style.transform = ''; }};
   s.addEventListener('click', e => {{
     e.preventDefault();
-    // текущая видимая высота (в том числе посреди анимации); у закрытого списка — 0
-    const cur = d.open ? c.getBoundingClientRect().height : 0;
-    if (anim) {{ anim.cancel(); anim = null; }}
-    const closing = d.open && c.dataset.state !== 'closing';
-    if (closing) {{
+    const cur = d.open ? c.getBoundingClientRect().height : 0;   // видимая высота сейчас (в том числе посреди анимации)
+    const curOpacity = d.open ? parseFloat(getComputedStyle(inner).opacity) : 0;
+    stop();
+    if (d.open && c.dataset.state !== 'closing') {{
       c.dataset.state = 'closing';
       c.style.height = cur + 'px';
-      const a = anim = c.animate([{{height: cur + 'px', opacity: 1}}, {{height: '0px', opacity: 0}}],
-                                 {{duration: 220, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards'}});
-      a.finished.then(() => {{ d.open = false; a.cancel(); reset(); delete c.dataset.state; anim = null; }}).catch(() => {{}});
+      const box = c.animate([{{height: cur + 'px'}}, {{height: '0px'}}],
+                            {{duration: 340, delay: 40, easing: EASE_IN_OUT, fill: 'forwards'}});
+      const fade = inner.animate([{{opacity: curOpacity, transform: 'translateY(0)'}}, {{opacity: 0, transform: 'translateY(-6px)'}}],
+                                 {{duration: 180, easing: 'ease-in', fill: 'forwards'}});
+      anims = [box, fade];
+      box.finished.then(() => {{ d.open = false; stop(); reset(); delete c.dataset.state; }}).catch(() => {{}});
     }} else {{
       c.dataset.state = 'opening';
       c.style.height = cur + 'px';
-      c.style.opacity = d.open ? '' : '0';
       d.open = true;
       const full = c.scrollHeight;
-      const a = anim = c.animate([{{height: cur + 'px', opacity: cur ? 1 : 0}}, {{height: full + 'px', opacity: 1}}],
-                                 {{duration: 300, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards'}});
-      a.finished.then(() => {{ a.cancel(); reset(); delete c.dataset.state; anim = null; }}).catch(() => {{}});
+      const box = c.animate([{{height: cur + 'px'}}, {{height: full + 'px'}}],
+                            {{duration: 460, easing: EASE_OUT, fill: 'forwards'}});
+      const show = inner.animate([{{opacity: curOpacity, transform: 'translateY(-8px)'}}, {{opacity: 1, transform: 'translateY(0)'}}],
+                                 {{duration: 380, delay: cur ? 0 : 80, easing: EASE_OUT, fill: 'both'}});
+      anims = [box, show];
+      box.finished.then(() => {{ stop(); reset(); delete c.dataset.state; }}).catch(() => {{}});
     }}
   }});
 }});
