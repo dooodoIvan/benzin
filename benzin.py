@@ -57,6 +57,8 @@ ALIASES = [  # шаблон адреса, короткое имя, сеть (е�
 ]
 MAX_STATIONS = 10  # сколько заправок может выбрать пользователь
 CATALOG_DAYS = 30  # в списке для выбора — заправки, о которых канал писал за последние 30 дней
+RETENTION_DAYS = 14  # записи о наличии топлива старше двух недель удаляются (статистика — за 2 недели)
+STATIONS_FILE = BASE / "data/stations.json"  # справочник заправок: адрес → сеть и когда о ней писали (не удаляется)
 FUEL_CHOICES = ["92", "95", "95+", "98", "100", "ДТ"]  # марки, о которых пишет канал
 DEFAULT_FUELS = ["95", "98"]  # марки по умолчанию (пока пользователь не выбрал свои в /fuels)
 FUEL_RU = {"92": "АИ-92", "95": "АИ-95", "95+": "АИ-95+", "98": "АИ-98", "100": "АИ-100", "ДТ": "ДТ"}
@@ -140,7 +142,13 @@ def open_db():
 
 
 def save_db(db):
-    """Пишет все наблюдения в CSV в стабильном порядке — так изменения в git остаются маленькими."""
+    """Пишет наблюдения в CSV в стабильном порядке — так изменения в git остаются маленькими.
+    Записи старше RETENTION_DAYS удаляются (справочник заправок при этом сохраняется в stations.json)."""
+    update_catalog(db)
+    cutoff = (datetime.now(MSK) - timedelta(days=RETENTION_DAYS)).isoformat()
+    removed = db.execute("DELETE FROM obs WHERE seen_at < ?", (cutoff,)).rowcount
+    if removed:
+        print(f"удалено записей старше {RETENTION_DAYS} дней: {removed}", file=sys.stderr)
     OBS_CSV.parent.mkdir(parents=True, exist_ok=True)
     tmp = OBS_CSV.with_suffix(".tmp")
     with tmp.open("w", encoding="utf-8", newline="") as f:
@@ -353,25 +361,53 @@ def chart_label(sid, limit=15):
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def load_registry(db):
-    """Справочник заправок, о которых канал писал за последние CATALOG_DAYS дней (+ заправки по умолчанию)."""
-    since = (datetime.now(MSK) - timedelta(days=CATALOG_DAYS)).isoformat()
-    brands, seen = {}, set()
-    for address, brand, n in db.execute(
-            "SELECT address, brand, COUNT(*) FROM obs WHERE seen_at >= ? GROUP BY address, brand", (since,)):
-        seen.add(address)
+def load_catalog():
+    try:
+        return json.loads(STATIONS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def update_catalog(db):
+    """Дополнить справочник заправок из записей: сеть (самая частая) и когда о заправке писали последний раз."""
+    cat = load_catalog()
+    brands = {}
+    for address, brand, n, last in db.execute(
+            "SELECT address, brand, COUNT(*), MAX(seen_at) FROM obs GROUP BY address, brand"):
+        entry = cat.setdefault(address, {})
+        if last > entry.get("last_seen", ""):
+            entry["last_seen"] = last
         if brand:
             brands.setdefault(address, {})[brand] = n
+    for address, counts in brands.items():
+        cat[address]["brand"] = max(counts, key=counts.get)
+    if cat != load_catalog():
+        STATIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATIONS_FILE.write_text(json.dumps(dict(sorted(cat.items())), ensure_ascii=False, indent=1), encoding="utf-8")
+    return cat
+
+
+def load_registry(db):
+    """Справочник всех известных заправок (из stations.json + свежих записей). Для выбора в боте предлагаются
+    те, о которых канал писал за последние CATALOG_DAYS дней (см. listable)."""
+    cat = update_catalog(db)
     REG.clear()
-    for address in seen:
-        brand = max(brands[address], key=brands[address].get) if address in brands else None
+    for address, info in cat.items():
+        brand = info.get("brand")
         alias, alias_brand = next(((n, b) for pattern, n, b in ALIASES if re.search(pattern, address.lower())), (None, None))
         brand = brand or alias_brand
         short = short_address(address)
         REG[station_of(address)] = {"address": address, "brand": brand, "alias": alias, "short": alias or short,
                                     "name": f"{brand}, {short}" if brand else short,
-                                    "label": f"{brand} · {alias or short}" if brand else (alias or short)}
+                                    "label": f"{brand} · {alias or short}" if brand else (alias or short),
+                                    "last_seen": info.get("last_seen", "")}
     return REG
+
+
+def listable(sid, sids=()):
+    """Показывать ли заправку в списке выбора: канал писал о ней недавно или она уже выбрана."""
+    since = (datetime.now(MSK) - timedelta(days=CATALOG_DAYS)).isoformat()
+    return sid in sids or REG[sid]["last_seen"] >= since
 
 
 def default_sids():
@@ -621,7 +657,7 @@ def cmd_telegram(args):
 
 # ---------- статистика: интервалы наличия, появления и окончания ----------
 
-STATS_DAYS = 30              # за сколько дней считать статистику
+STATS_DAYS = RETENTION_DAYS  # за сколько дней считать статистику
 MAX_GAP = timedelta(hours=2)  # сколько считаем состояние верным после последнего отчёта
 EVENT_GAP = timedelta(hours=12)  # смена «нет→есть» засчитывается, если между состояниями не дольше
 SIGNAL_CONFLICT = timedelta(minutes=60)
@@ -1476,11 +1512,12 @@ def brand_key(brand):
     return hashlib.sha1(brand.encode()).hexdigest()[:4]
 
 
-def brands():
+def brands(sids=()):
     """→ [(название сети, ключ, число заправок)] — сначала крупные сети."""
     counts = {}
     for sid in REG:
-        counts[brand_of(sid)] = counts.get(brand_of(sid), 0) + 1
+        if listable(sid, sids):
+            counts[brand_of(sid)] = counts.get(brand_of(sid), 0) + 1
     order = sorted(counts, key=lambda b: (b == "Другие", -counts[b], b))
     return [(b, brand_key(b), counts[b]) for b in order]
 
@@ -1499,7 +1536,7 @@ def stations_view(sids, view):
 
     if view == "home":
         rows, row = [], []
-        for b, key, n in brands():
+        for b, key, n in brands(sids):
             row.append({"text": f"{b} · {n}", "callback_data": f"st:b:{key}"})
             if len(row) == 2:
                 rows.append(row)
@@ -1517,10 +1554,10 @@ def stations_view(sids, view):
         return f"<b>Мои заправки</b> ({len(sids)} из {MAX_STATIONS}) — нажмите, чтобы убрать:", rows
     key, _, page = view.partition(".")  # ключ сети и номер страницы списка
     page = int(page or 0)
-    brand = next((b for b, k, _ in brands() if k == key), None)
+    brand = next((b for b, k, _ in brands(sids) if k == key), None)
     if brand is None:
         return stations_view(sids, "home")
-    in_brand = sorted((s for s in REG if brand_of(s) == brand), key=lambda s: REG[s]["label"])
+    in_brand = sorted((s for s in REG if brand_of(s) == brand and listable(s, sids)), key=lambda s: REG[s]["label"])
     pages = max(1, -(-len(in_brand) // PAGE_SIZE))
     page = min(page, pages - 1)
     rows = [toggle_btn(s, f"{key}.{page}") for s in in_brand[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]]
