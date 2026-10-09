@@ -10,7 +10,7 @@
   collect             забрать свежие посты и дописать наблюдения в data/obs.csv
   status              последнее известное состояние на отслеживаемых заправках
   telegram            отправить полную сводку в Telegram
-  telegram --alerts   написать в Telegram, только если на какой-то заправке появился нужный бензин
+  telegram --alerts   написать в Telegram, только если заправка перешла в статус «есть»
   update              collect + status + страница report.html (--json — для приложения на Mac)
   report --out PATH   только записать страницу со сводкой (для публикации на GitHub Pages)
   worker              непрерывная работа на GitHub Actions: сбор по расписанию 12–24 МСК
@@ -53,8 +53,7 @@ STATIONS = {
 FUELS = ["95", "98"]  # интересующие марки (95+ / Pulsar не учитываем)
 FRESH = timedelta(hours=24)  # старше — считаем «нет свежих данных»
 CONFIRM_FRESH = timedelta(hours=2)  # «есть» старше 2 часов показываем жёлтым «?»
-ALERT_WINDOW = timedelta(hours=4)    # «есть» засчитываем, если подтверждено за последние 4 часа
-ALERT_COOLDOWN = timedelta(hours=3)  # не повторять оповещение по той же заправке чаще
+ALERT_COOLDOWN = timedelta(hours=1)  # защита от «мигания» есть/нет: по одной заправке не чаще раза в час
 KIND_RU = {"report": "водитель", "summary": "сводка канала", "signal": "терминалы оплаты, не подтверждено"}
 
 
@@ -396,10 +395,10 @@ def tg_chat_id(token):
 
 
 def available_now(fuels, now):
-    """Марки, которые водители или сводка канала подтвердили как «есть» за последние ALERT_WINDOW.
-    Сигналы терминалов не учитываем — по ним бот не пишет."""
+    """Марки, которые водители или сводка канала подтвердили как «есть» не больше 2 часов назад
+    (тот же порог, что у статуса «есть» в сводке). Сигналы терминалов не учитываем."""
     return {f: v for f, v in fuels.items()
-            if v[1] and v[4] != "signal" and now - v[0] <= ALERT_WINDOW}
+            if v[1] and v[4] != "signal" and now - v[0] <= CONFIRM_FRESH}
 
 
 def alert_text(db, appeared, now):
@@ -437,13 +436,16 @@ def cmd_telegram(args):
     state = json.loads(TG_ALERTS_FILE.read_text()) if TG_ALERTS_FILE.exists() else {}
     appeared = []
     for name, fuels in latest_state(db).items():
-        avail = available_now(fuels, now)
+        cls = station_state(fuels, now)[0]
         prev = state.get(name, {})
+        prev_cls = prev.get("state") or ("have" if prev.get("have") else "none")  # старый формат файла
         last_alert = datetime.fromisoformat(prev["last_alert"]) if prev.get("last_alert") else None
-        if avail and not prev.get("have") and (not last_alert or now - last_alert >= ALERT_COOLDOWN):
-            appeared.append((name, avail))
+        # пишем только при переходе в «есть»; «было давно» → «есть» — бензин не пропадал, молчим
+        if cls == "have" and prev_cls not in ("have", "stale") and (not last_alert or now - last_alert >= ALERT_COOLDOWN):
+            appeared.append((name, available_now(fuels, now)))
             prev["last_alert"] = now.isoformat()
-        prev["have"] = bool(avail)
+        prev["state"] = cls
+        prev.pop("have", None)
         state[name] = prev
     if appeared:
         tg_call(token, "sendMessage", chat_id=chat_id, text=alert_text(db, appeared, now),
@@ -615,8 +617,8 @@ def tip(text):
     return f'data-tip="{html.escape(text, quote=True)}" tabindex="0"'
 
 
-def first_hour(stats, default=12):
-    """С какого часа показывать графики: с первого часа (не раньше 6:00), когда были данные, но не позже 12:00.
+def first_hour(stats, default=7):
+    """С какого часа показывать графики: с первого часа (не раньше 6:00), когда были данные, но не позже начала сбора.
     Ночные часы — это лишь «хвост» вечерних отчётов, сбора там нет."""
     hours = [h for st in stats.values() if st for h in range(6, 24) if sum(st["hourly"][h]) >= 1]
     return min(hours + [default])
@@ -866,7 +868,7 @@ h2.section {{ font-size:19px; margin:28px 0 2px; }}
 <h1>⛽ Бензин · АИ-95 / 98</h1>
 <div class="topbar">
   <div class="muted">Обновлено <b id="updated">{now:%d.%m.%Y в %H:%M}</b> <span id="ago"></span>.
-  Данные из канала @voronezh_benzin. Сбор: 12–18 ч каждые 45 мин, 18–24 ч каждые 10 мин, ночью и утром не ведётся. Бледные строки — старше суток.</div>
+  Данные из канала @voronezh_benzin. Сбор с 7:00 до 24:00 каждые 10 минут, ночью не ведётся. Бледные строки — старше суток.</div>
   <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener">🔄 Обновить сейчас</a>
 </div>
 <div class="hint" id="hint" hidden>Нажмите <b>Run workflow</b> на GitHub. Примерно через 1–2 минуты эта страница обновится сама.
@@ -932,7 +934,7 @@ def cmd_update(args):
         cmd_status(args, db)
 
 
-# ---------- сервер на GitHub Actions: непрерывная работа с 12:00 до 24:00 ----------
+# ---------- сервер на GitHub Actions: непрерывная работа с 7:00 до 24:00 ----------
 #
 # GitHub плохо выполняет расписание (запуски опаздывают на часы или пропадают), поэтому
 # одна задача работает непрерывно и сама собирает данные по расписанию ниже. GitHub ограничивает
@@ -940,16 +942,17 @@ def cmd_update(args):
 # создаёт задачу, которая ждёт в очереди; работающая задача замечает её за ~20 секунд,
 # делает сбор и отменяет её.
 
-WORK_START, WORK_END = 12, 24  # часы сбора, МСК
+WORK_START, WORK_END = 7, 24  # часы сбора, МСК
+SLOT_MINUTES = 10              # сбор каждые 10 минут
 REPO = os.environ.get("GITHUB_REPOSITORY", "dooodoIvan/benzin")
 WORKFLOW = "collect.yml"
 MANUAL_TITLE = "Обновить сейчас"  # run-name ручного запуска (см. .github/workflows/collect.yml)
 
 
 def day_slots(ws):
-    """Моменты сбора за день: 12:00–17:15 каждые 45 мин, 18:00–23:50 каждые 10 мин."""
-    return ([ws + timedelta(minutes=45 * k) for k in range(8)] +
-            [ws + timedelta(hours=6, minutes=10 * k) for k in range(36)])
+    """Моменты сбора за день: с 7:00 до 23:50 каждые 10 минут."""
+    n = (WORK_END - WORK_START) * 60 // SLOT_MINUTES
+    return [ws + timedelta(minutes=SLOT_MINUTES * k) for k in range(n)]
 
 
 def gh_api(method, path, body=None):
@@ -987,7 +990,7 @@ def publish_page(db):
         page = Path(tmp)
         write_report(db, page / "index.html")
         (page / ".nojekyll").write_text("")
-        (page / "README.md").write_text("# Бензин · сводка\n\nОбновляется автоматически: 12–18 ч МСК каждые 45 мин, 18–24 ч каждые 10 мин.\n")
+        (page / "README.md").write_text("# Бензин · сводка\n\nОбновляется автоматически с 7:00 до 24:00 МСК каждые 10 минут.\n")
         env = {**os.environ, "GIT_SSH_COMMAND": f"ssh -i {key} -o StrictHostKeyChecking=accept-new"}
         for cmd in (["init", "-q", "-b", "main"], ["add", "-A"],
                     ["-c", "user.name=github-actions[bot]",
