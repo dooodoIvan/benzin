@@ -601,7 +601,10 @@ def cmd_telegram(args):
             prev["last_alert"] = now.isoformat()
         prev["state"] = cls
         state[key] = prev
+    paused = paused_ids() if appeared else set()
     for cid, sids, fuels in people:
+        if cid in paused:
+            continue
         items = [(sid, [f for f in fuels if (sid, f) in appeared]) for sid in sids]
         items = [(sid, fs) for sid, fs in items if fs]
         if not items:
@@ -1311,18 +1314,99 @@ def say(token, chat_id, text, markup=None):
 
 
 BOT_NAME = "Мои заправки"
-BTN_STATIONS, BTN_FUELS, BTN_REFRESH = "📍 Заправки", "🛢 Марки", "🔄 Обновить"
-KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}]],
+BTN_STATIONS, BTN_FUELS, BTN_REFRESH, BTN_PAUSE = "📍 Заправки", "🛢 Марки", "🔄 Обновить", "🔕 Пауза"
+KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}, {"text": BTN_PAUSE}]],
             "resize_keyboard": True, "is_persistent": True}
-KEYBOARD_VERSION = 2  # увеличить, если поменяются кнопки — тогда бот пришлёт их всем заново
+KEYBOARD_VERSION = 3  # увеличить, если поменяются кнопки — тогда бот пришлёт их всем заново
 BTN_SUBS, BTN_WAIT = "👥 Подписчики", "⏳ Ожидаю подтверждения"
-OWNER_KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}, {"text": BTN_SUBS}]],
-                  "resize_keyboard": True, "is_persistent": True}
-OWNER_KEYBOARD_VERSION = 3
+OWNER_KEYBOARD = {"keyboard": [[{"text": BTN_STATIONS}, {"text": BTN_FUELS}], [{"text": BTN_REFRESH}, {"text": BTN_PAUSE}],
+                               [{"text": BTN_SUBS}]], "resize_keyboard": True, "is_persistent": True}
+OWNER_KEYBOARD_VERSION = 4
 WAIT_KEYBOARD = {"keyboard": [[{"text": BTN_WAIT}]], "resize_keyboard": True, "is_persistent": True}
 WAIT_TEXT = ("⏳ <b>Ваш запрос ожидает подтверждения.</b>\n\n"
              "Я отправил его владельцу бота. Как только он подтвердит доступ, я сразу напишу — "
              "и вы сможете выбрать марки топлива и заправки, о которых хотите получать информацию.")
+
+
+def pause_state(entry, now):
+    """→ None (уведомления включены), "forever" или время окончания паузы."""
+    v = (entry or {}).get("paused_until")
+    if v == "forever":
+        return "forever"
+    if v:
+        t = datetime.fromisoformat(v)
+        return t if t > now else None
+    return None
+
+
+def pause_text(state, now):
+    if state == "forever":
+        return "пока вы их не включите"
+    return "до " + (f"{state:%H:%M}" if state.date() == now.date() else f"{state:%d.%m %H:%M}")
+
+
+def pause_menu(entry, now):
+    state = pause_state(entry, now)
+    if state:
+        return (f"🔕 Уведомления на паузе {pause_text(state, now)}.",
+                [[{"text": "🔔 Включить сейчас", "callback_data": "pz:on"}]])
+    return ("На сколько поставить уведомления на паузу?",
+            [[{"text": "1 час", "callback_data": "pz:1"}, {"text": "3 часа", "callback_data": "pz:3"}],
+             [{"text": f"До утра ({WORK_START}:00)", "callback_data": "pz:morning"},
+              {"text": "Пока не включу", "callback_data": "pz:forever"}]])
+
+
+def handle_pause_cb(token, cb, subs):
+    cid, data, msg = str(cb["from"]["id"]), cb.get("data", ""), cb.get("message", {})
+    tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"])
+    entry = user_entry(subs, cid)
+    if entry is None:
+        return False
+    now = datetime.now(MSK)
+    action = data.split(":", 1)[1]
+    if action == "on":
+        entry.pop("paused_until", None)
+        text = "🔔 Уведомления включены."
+    else:
+        if action == "forever":
+            entry["paused_until"] = "forever"
+        elif action == "morning":
+            t = now.replace(hour=WORK_START, minute=0, second=0, microsecond=0)
+            entry["paused_until"] = (t if t > now else t + timedelta(days=1)).isoformat()
+        else:
+            entry["paused_until"] = (now + timedelta(hours=int(action))).isoformat()
+        text = (f"🔕 Уведомления на паузе {pause_text(pause_state(entry, now), now)}.\n"
+                "Сводка и кнопка «🔄 Обновить» работают как обычно. Включить раньше — кнопка «🔕 Пауза».")
+    tg_call(token, "editMessageText", chat_id=cid, message_id=msg.get("message_id"), text=text, parse_mode="HTML")
+    return True
+
+
+def check_pause_expiry():
+    """Сообщить тем, у кого пауза закончилась сама."""
+    if not bot_ready():
+        return
+    token, now = os.environ["TELEGRAM_TOKEN"], datetime.now(MSK)
+    subs, changed = load_subs(), False
+    people = [(owner_id(), subs["owner"])] + list(subs["subscribers"].items())
+    for cid, entry in people:
+        v = entry.get("paused_until")
+        if v and v != "forever" and datetime.fromisoformat(v) <= now:
+            entry.pop("paused_until")
+            changed = True
+            try:
+                say(token, cid, "🔔 Пауза закончилась — уведомления снова включены.")
+            except Exception as e:
+                print(f"пауза …{cid[-4:]}: {e}", file=sys.stderr)
+    if changed:
+        save_subs(subs)
+
+
+def paused_ids():
+    if not os.environ.get("SUBSCRIBERS_KEY"):
+        return set()
+    subs, now = load_subs(), datetime.now(MSK)
+    people = [(owner_id(), subs["owner"])] + list(subs["subscribers"].items())
+    return {cid for cid, entry in people if pause_state(entry, now)}
 
 
 def keyboard_for(cid):
@@ -1333,6 +1417,7 @@ def keyboard_version(cid):
     return OWNER_KEYBOARD_VERSION if cid == owner_id() else KEYBOARD_VERSION
 KEYBOARD_TEXT = ("Внизу — кнопки:\n📍 Заправки — выбрать заправки\n🛢 Марки — выбрать марки топлива\n"
                  "🔄 Обновить — собрать свежие данные прямо сейчас\n"
+                 "🔕 Пауза — временно не присылать оповещения\n"
                  "⛽ Сводка (слева) — сводка и статистика по вашим заправкам.")
 REFRESH = {"waiting": set(), "last": 0.0}  # кто нажал «Обновить» и когда данные обновлялись в последний раз
 REFRESH_MIN = 60  # не чаще раза в минуту
@@ -1345,7 +1430,8 @@ WELCOME = (
     "⛽ <b>Сводка</b> — кнопка слева от поля ввода: где топливо есть прямо сейчас, очереди, "
     "а также статистика — когда его обычно привозят и когда оно заканчивается.\n"
     "📍 <b>Заправки</b> и 🛢 <b>Марки</b> — кнопки под полем ввода: можно выбрать до 10 заправок и нужные марки.\n"
-    "🔄 <b>Обновить</b> — собрать свежие данные прямо сейчас.\n\n"
+    "🔄 <b>Обновить</b> — собрать свежие данные прямо сейчас.\n"
+    "🔕 <b>Пауза</b> — временно не присылать оповещения (на час, до утра или пока не включите).\n\n"
     "Данные обновляются сами с 7:00 до 24:00 каждые 10 минут.\n\n"
     "<b>Шаг 1 из 2.</b> Выберите марки топлива, о которых хотите получать информацию, и нажмите «Далее»:")
 STEP2 = ("<b>Шаг 2 из 2.</b> Выберите заправки (до 10), о которых хотите получать информацию.\n"
@@ -1376,6 +1462,7 @@ def finish_onboarding(token, subs, cid):
 
 HELP_SUB = ("Бот присылает оповещение, когда на ваших заправках появляется нужное вам топливо.\n"
             "📍 Заправки — выбрать заправки (до 10)\n🛢 Марки — выбрать марки топлива\n🔄 Обновить — свежие данные сейчас\n"
+            "🔕 Пауза — временно не присылать оповещения\n"
             "Сводка со статистикой — кнопка «⛽ Сводка» внизу.\n/stop — отписаться.")
 
 
@@ -1557,7 +1644,12 @@ def handle_message(token, msg, subs):
         return False
     cid, text = str(chat["id"]), (msg.get("text") or "").strip()
     owner = owner_id()
-    text = {BTN_STATIONS: "/stations", BTN_FUELS: "/fuels", BTN_REFRESH: "/refresh", BTN_SUBS: "/list"}.get(text, text)
+    text = {BTN_STATIONS: "/stations", BTN_FUELS: "/fuels", BTN_REFRESH: "/refresh", BTN_SUBS: "/list",
+            BTN_PAUSE: "/pause"}.get(text, text)
+    if text.startswith("/pause") and (cid == owner or cid in subs["subscribers"]):
+        menu_text, rows = pause_menu(user_entry(subs, cid), datetime.now(MSK))
+        say(token, cid, menu_text, {"inline_keyboard": rows})
+        return False
     if text.startswith("/refresh") and (cid == owner or cid in subs["subscribers"]):
         if time.time() - REFRESH["last"] < REFRESH_MIN:
             say(token, cid, f"Данные обновлялись меньше минуты назад — сводка свежая.",
@@ -1627,6 +1719,8 @@ def handle_callback(token, cb, subs):
         return handle_stations_cb(token, cb, subs)
     if data.startswith("fu:"):
         return handle_fuels_cb(token, cb, subs)
+    if data.startswith("pz:"):
+        return handle_pause_cb(token, cb, subs)
     owner = owner_id()
     tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"])
     if str(cb.get("from", {}).get("id")) != owner or not data.startswith("sub:"):
@@ -1680,11 +1774,13 @@ def setup_bot(db):
         {"command": "stations", "description": "Выбрать заправки"},
         {"command": "fuels", "description": "Выбрать марки топлива"},
         {"command": "refresh", "description": "Обновить данные сейчас"},
+        {"command": "pause", "description": "Пауза уведомлений"},
         {"command": "stop", "description": "Отписаться от оповещений"}]))
     tg_call(token, "setMyCommands", scope=json.dumps({"type": "chat", "chat_id": int(owner)}), commands=json.dumps([
         {"command": "stations", "description": "Выбрать свои заправки"},
         {"command": "fuels", "description": "Выбрать марки топлива"},
         {"command": "refresh", "description": "Обновить данные сейчас"},
+        {"command": "pause", "description": "Пауза уведомлений"},
         {"command": "list", "description": "Подписчики и запросы"}]))
     for cid, sids, fuels in all_selections():
         try:
@@ -1954,6 +2050,7 @@ def work_once():
     for step, fn in (("страница", lambda: publish_page(db)),
                      ("telegram", lambda: cmd_telegram(argparse.Namespace(alerts=True)) if os.environ.get("TELEGRAM_TOKEN") else None),
                      ("бот", poll_bot),
+                     ("пауза", check_pause_expiry),
                      ("сохранение", save_and_push)):
         try:
             fn()
