@@ -30,6 +30,7 @@ jobs:
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       PAGES_DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
+      SUBSCRIBERS_KEY: ${{ secrets.SUBSCRIBERS_KEY }}
       GH_TOKEN: ${{ github.token }}
       REASON: ${{ github.event_name == 'schedule' && 'schedule' || inputs.reason || 'manual' }}
     steps:

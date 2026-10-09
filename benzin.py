@@ -378,19 +378,11 @@ def ensure_menu_button(token, chat_id):
 
 
 def tg_chat_id(token):
-    """Чат получателя: из переменной/файла, иначе — первый, кто написал боту /start."""
+    """Чат владельца: секрет TELEGRAM_CHAT_ID (на Mac — локальный файл data/telegram_chat.txt)."""
     if os.environ.get("TELEGRAM_CHAT_ID"):
         return os.environ["TELEGRAM_CHAT_ID"]
     if TG_CHAT_FILE.exists():
         return TG_CHAT_FILE.read_text().strip()
-    me = tg_call(token, "getMe").get("result", {})
-    updates = tg_call(token, "getUpdates").get("result", [])
-    print(f"бот @{me.get('username')}: входящих сообщений {len(updates)}", file=sys.stderr)
-    for upd in updates:
-        chat = (upd.get("message") or {}).get("chat", {})
-        if chat.get("type") == "private":
-            TG_CHAT_FILE.write_text(str(chat["id"]))
-            return str(chat["id"])
     return None
 
 
@@ -448,8 +440,13 @@ def cmd_telegram(args):
         prev.pop("have", None)
         state[name] = prev
     if appeared:
-        tg_call(token, "sendMessage", chat_id=chat_id, text=alert_text(db, appeared, now),
-                parse_mode="HTML", disable_web_page_preview="true", reply_markup=page_button(now))
+        text = alert_text(db, appeared, now)
+        for rid in recipients():
+            try:
+                tg_call(token, "sendMessage", chat_id=rid, text=text, parse_mode="HTML",
+                        disable_web_page_preview="true", reply_markup=page_button(now))
+            except Exception as e:  # например, подписчик заблокировал бота
+                print(f"не удалось отправить {rid[-4:]}: {e}", file=sys.stderr)
         print("оповещение: " + ", ".join(n for n, _ in appeared), file=sys.stderr)
     else:
         print("новых появлений нет", file=sys.stderr)
@@ -934,6 +931,172 @@ def cmd_update(args):
         cmd_status(args, db)
 
 
+# ---------- подписчики бота (с подтверждением владельца) ----------
+#
+# Хранилище открытое, поэтому список подписчиков (их Telegram ID) лежит в data/subscribers.enc
+# в зашифрованном виде (AES-256, ключ — секрет SUBSCRIBERS_KEY на GitHub).
+
+SUBS_FILE = BASE / "data/subscribers.enc"
+TG_OFFSET_FILE = BASE / "data/telegram_offset.txt"  # номер последнего обработанного сообщения боту
+
+
+def _openssl(args, data):
+    key = os.environ.get("SUBSCRIBERS_KEY")
+    if not key:
+        raise RuntimeError("не задан SUBSCRIBERS_KEY")
+    res = subprocess.run(["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-a", "-A", "-pass", "env:SUBSCRIBERS_KEY", *args],
+                         input=data, capture_output=True, check=True)
+    return res.stdout
+
+
+def load_subs():
+    """→ {"subscribers": {id: {"name": ..., "since": ...}}, "pending": {id: {"name": ..., "at": ...}}}"""
+    if not SUBS_FILE.exists():
+        return {"subscribers": {}, "pending": {}}
+    return json.loads(_openssl(["-d"], SUBS_FILE.read_bytes()))
+
+
+def save_subs(subs):
+    SUBS_FILE.write_bytes(_openssl([], json.dumps(subs, ensure_ascii=False).encode()) + b"\n")
+
+
+def owner_id():
+    return os.environ.get("TELEGRAM_CHAT_ID", "")
+
+
+def recipients():
+    """Кому слать оповещения: владельцу и подтверждённым подписчикам."""
+    ids = [owner_id()] if owner_id() else []
+    try:
+        ids += [cid for cid in load_subs()["subscribers"] if cid not in ids]
+    except Exception as e:
+        print(f"подписчики недоступны: {e}", file=sys.stderr)
+    return ids
+
+
+def user_name(user):
+    name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or "Без имени"
+    return name + (f" (@{user['username']})" if user.get("username") else "")
+
+
+def set_menu_button(token, chat_id):
+    tg_call(token, "setChatMenuButton", chat_id=chat_id, menu_button=json.dumps(
+        {"type": "web_app", "text": "⛽ Сводка", "web_app": {"url": PAGE_URL}}))
+
+
+def say(token, chat_id, text, markup=None):
+    params = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": "true"}
+    if markup:
+        params["reply_markup"] = json.dumps(markup)
+    return tg_call(token, "sendMessage", **params)
+
+
+HELP_SUB = ("Бот присылает оповещение, когда на одной из отслеживаемых заправок Воронежа появляется АИ-95 или АИ-98.\n"
+            "Сводка со статистикой — кнопка «⛽ Сводка» внизу.\n/stop — отписаться.")
+
+
+def handle_message(token, msg, subs):
+    chat, user = msg.get("chat", {}), msg.get("from", {})
+    if chat.get("type") != "private":
+        return False
+    cid, text = str(chat["id"]), (msg.get("text") or "").strip()
+    owner = owner_id()
+    if cid == owner:
+        if text.startswith("/list"):
+            if not subs["subscribers"]:
+                say(token, cid, "Подписчиков пока нет. Чтобы подписаться, человек нажимает «Запустить» у бота, а вы подтверждаете.")
+            for sid, info in subs["subscribers"].items():
+                say(token, cid, f"👤 {html.escape(info['name'])}, с {info['since'][:10]}",
+                    {"inline_keyboard": [[{"text": "❌ Удалить", "callback_data": f"sub:del:{sid}"}]]})
+        else:
+            say(token, cid, "Вы владелец бота: оповещения приходят вам и подтверждённым подписчикам.\n/list — список подписчиков.")
+        return False
+    if text.startswith("/stop"):
+        if cid in subs["subscribers"]:
+            info = subs["subscribers"].pop(cid)
+            say(token, cid, "Вы отписались от оповещений. Чтобы подписаться снова, отправьте /start.")
+            say(token, owner, f"👋 Отписка от оповещений: {html.escape(info['name'])}.")
+            return True
+        say(token, cid, "Вы и так не подписаны. /start — попросить доступ.")
+        return False
+    if cid in subs["subscribers"]:
+        say(token, cid, ("Вы уже получаете оповещения.\n\n" if text.startswith("/start") else "") + HELP_SUB)
+        return False
+    if cid in subs["pending"]:
+        say(token, cid, "Запрос уже отправлен владельцу бота — ждём подтверждения.")
+        return False
+    if text.startswith("/start"):
+        name = user_name(user)
+        subs["pending"][cid] = {"name": name, "at": datetime.now(MSK).isoformat()}
+        say(token, owner, f"🔔 <b>{html.escape(name)}</b> хочет получать оповещения о появлении бензина.",
+            {"inline_keyboard": [[{"text": "✅ Добавить", "callback_data": f"sub:ok:{cid}"},
+                                  {"text": "❌ Отклонить", "callback_data": f"sub:no:{cid}"}]]})
+        say(token, cid, "Запрос отправлен владельцу бота. Как только он подтвердит, начнут приходить оповещения, "
+                        "когда на заправках появляется АИ-95 или АИ-98.")
+        return True
+    say(token, cid, "Это бот оповещений о бензине в Воронеже. Отправьте /start, чтобы попросить доступ.")
+    return False
+
+
+def handle_callback(token, cb, subs):
+    owner, data = owner_id(), cb.get("data", "")
+    tg_call(token, "answerCallbackQuery", callback_query_id=cb["id"])
+    if str(cb.get("from", {}).get("id")) != owner or not data.startswith("sub:"):
+        return False
+    _, action, cid = data.split(":", 2)
+    msg = cb.get("message", {})
+
+    def done(text):
+        tg_call(token, "editMessageText", chat_id=owner, message_id=msg.get("message_id"), text=text, parse_mode="HTML")
+
+    if action == "ok" and cid in subs["pending"]:
+        info = subs["pending"].pop(cid)
+        subs["subscribers"][cid] = {"name": info["name"], "since": datetime.now(MSK).isoformat()}
+        set_menu_button(token, cid)
+        say(token, cid, "✅ Владелец подтвердил доступ. " + HELP_SUB, json.loads(page_button(datetime.now(MSK))))
+        done(f"✅ Добавлено в подписчики: {html.escape(info['name'])}.")
+        return True
+    if action == "no" and cid in subs["pending"]:
+        info = subs["pending"].pop(cid)
+        say(token, cid, "Владелец бота отклонил запрос на оповещения.")
+        done(f"❌ Запрос от {html.escape(info['name'])} отклонён.")
+        return True
+    if action == "del" and cid in subs["subscribers"]:
+        info = subs["subscribers"].pop(cid)
+        say(token, cid, "Владелец бота отключил вам оповещения.")
+        done(f"🗑 Удалено из подписчиков: {html.escape(info['name'])}.")
+        return True
+    done("Этот запрос уже обработан.")
+    return False
+
+
+def poll_bot():
+    """Прочитать новые сообщения боту и ответить на них (подписка, отписка, подтверждения)."""
+    token = os.environ.get("TELEGRAM_TOKEN")
+    if not token or not owner_id() or not os.environ.get("SUBSCRIBERS_KEY"):
+        return
+    offset = int(TG_OFFSET_FILE.read_text()) if TG_OFFSET_FILE.exists() else 0
+    updates = tg_call(token, "getUpdates", offset=offset, timeout=0,
+                      allowed_updates=json.dumps(["message", "callback_query"])).get("result", [])
+    if not updates:
+        return
+    subs, changed = load_subs(), False
+    for upd in updates:
+        offset = upd["update_id"] + 1
+        try:
+            if "message" in upd:
+                changed |= handle_message(token, upd["message"], subs)
+            elif "callback_query" in upd:
+                changed |= handle_callback(token, upd["callback_query"], subs)
+        except Exception as e:
+            print(f"бот: ошибка {e}", file=sys.stderr)
+    if changed:
+        save_subs(subs)
+    TG_OFFSET_FILE.write_text(str(offset))
+    if changed:
+        save_and_push()  # подписчиков сохраняем сразу, не дожидаясь сбора
+
+
 # ---------- сервер на GitHub Actions: непрерывная работа с 7:00 до 24:00 ----------
 #
 # GitHub плохо выполняет расписание (запуски опаздывают на часы или пропадают), поэтому
@@ -1025,6 +1188,7 @@ def work_once():
         print(f"сбор не удался: {e}", file=sys.stderr)
     for step, fn in (("страница", lambda: publish_page(db)),
                      ("telegram", lambda: cmd_telegram(argparse.Namespace(alerts=True)) if os.environ.get("TELEGRAM_TOKEN") else None),
+                     ("бот", poll_bot),
                      ("сохранение", save_and_push)):
         try:
             fn()
@@ -1073,6 +1237,10 @@ def cmd_worker(args):
                     pass
             do_now = False
             continue
+        try:
+            poll_bot()
+        except Exception as e:
+            print(f"бот: ошибка {e}", file=sys.stderr)
         time.sleep(20)
 
 
