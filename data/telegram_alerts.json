@@ -164,7 +164,8 @@
   "state": "unknown"
  },
  "d0dbe7|95": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-10T08:30:10.599665+03:00"
  },
  "d0dbe7|98": {
   "state": "unknown"
