@@ -15,7 +15,7 @@
   "state": "unknown"
  },
  "a9ae0c|95": {
-  "state": "have"
+  "state": "stale"
  },
  "a9ae0c|98": {
   "state": "unknown"
@@ -81,7 +81,7 @@
   "state": "term"
  },
  "a9ae0c|92": {
-  "state": "have"
+  "state": "stale"
  },
  "e3a599|92": {
   "state": "term",
