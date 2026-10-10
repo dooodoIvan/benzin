@@ -84,11 +84,11 @@
   "state": "stale"
  },
  "e3a599|92": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-10T17:20:13.651844+03:00"
  },
  "e3a599|95": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-10T17:20:13.651844+03:00"
  },
  "fbe476|92": {
