@@ -21,7 +21,7 @@
   "state": "unknown"
  },
  "c4a883|95": {
-  "state": "none",
+  "state": "term",
   "last_alert": "2026-10-10T11:20:15.395879+03:00"
  },
  "c4a883|98": {
@@ -193,7 +193,7 @@
   "state": "term"
  },
  "c4a883|92": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-10T21:10:13.607881+03:00"
  }
 }
