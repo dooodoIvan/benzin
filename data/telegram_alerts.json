@@ -95,10 +95,11 @@
   "state": "term"
  },
  "2876fc|95": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-10T15:10:27.279897+03:00"
  },
  "2876fc|95+": {
-  "state": "stale"
+  "state": "have"
  },
  "741212|92": {
   "state": "term",
