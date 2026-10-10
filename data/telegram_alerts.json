@@ -82,10 +82,12 @@
   "state": "stale"
  },
  "e3a599|92": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-10T07:50:19.979261+03:00"
  },
  "e3a599|95": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-10T07:50:19.979261+03:00"
  },
  "fbe476|92": {
   "state": "term"
@@ -169,5 +171,11 @@
  },
  "8fcece|92": {
   "state": "term"
+ },
+ "1a9329|95": {
+  "state": "none"
+ },
+ "1a9329|98": {
+  "state": "unknown"
  }
 }
