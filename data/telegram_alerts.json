@@ -8,7 +8,7 @@
   "state": "none"
  },
  "68d21d|95": {
-  "state": "have",
+  "state": "none",
   "last_alert": "2026-10-10T18:50:29.586215+03:00"
  },
  "68d21d|98": {
@@ -163,7 +163,8 @@
   "state": "term"
  },
  "1400f4|98": {
-  "state": "unknown"
+  "state": "have",
+  "last_alert": "2026-10-10T19:40:16.307115+03:00"
  },
  "ca3966|95": {
   "state": "term",
