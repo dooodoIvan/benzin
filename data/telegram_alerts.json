@@ -149,7 +149,8 @@
   "state": "term"
  },
  "c93502|92": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-10T09:10:22.836914+03:00"
  },
  "1400f4|95": {
   "state": "term"
@@ -174,7 +175,7 @@
   "state": "term"
  },
  "1a9329|95": {
-  "state": "none"
+  "state": "term"
  },
  "1a9329|98": {
   "state": "unknown"
