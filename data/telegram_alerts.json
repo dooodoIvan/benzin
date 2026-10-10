@@ -74,10 +74,11 @@
   "last_alert": "2026-10-10T11:20:15.395879+03:00"
  },
  "7cce85|92": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-10T11:30:27.174173+03:00"
  },
  "7cce85|95": {
-  "state": "term"
+  "state": "none"
  },
  "a9ae0c|92": {
   "state": "have"
