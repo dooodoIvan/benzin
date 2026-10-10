@@ -163,7 +163,7 @@
   "state": "unknown"
  },
  "ca3966|95": {
-  "state": "have",
+  "state": "none",
   "last_alert": "2026-10-10T12:30:21.849774+03:00"
  },
  "ca3966|98": {
