@@ -2405,9 +2405,31 @@ def cmd_worker(args):
     print(f"запуск: {args.reason}, {start:%d.%m %H:%M}", file=sys.stderr, flush=True)
 
     if start >= we or start < ws - timedelta(hours=2):
-        # ночью и рано утром сбора по расписанию нет; по кнопке — один сбор
+        # ночью сбора нет; по кнопке — один сбор. Смена-«продолжение» не завершается, а ждёт до утра
+        # (cron GitHub утром почти не срабатывает) и сама передаёт эстафету, чтобы в 7:00 сервер уже работал.
         if args.reason == "manual":
             work_once()
+        if args.reason != "chain":
+            return
+        target = ws - timedelta(minutes=90)
+        if target <= start:
+            target += timedelta(days=1)
+        wake = min(target, start + timedelta(minutes=350))
+        print(f"ночное ожидание до {wake:%d.%m %H:%M}", file=sys.stderr, flush=True)
+        while datetime.now(MSK) < wake:
+            try:
+                manual = pending_manual_runs()
+                if manual:
+                    work_once()
+                    for run_id in set(manual + pending_manual_runs()):
+                        try:
+                            gh_api("POST", f"actions/runs/{run_id}/cancel")
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"ночь: ошибка {e}", file=sys.stderr)
+            time.sleep(20)
+        dispatch_successor()
         return
 
     try:
@@ -2436,6 +2458,7 @@ def cmd_worker(args):
                 save_and_push()
             if now >= we:
                 print("рабочий день закончился", file=sys.stderr)
+                dispatch_successor()  # ночная смена: ждёт до утра
                 return
             # 6-часовой предел GitHub: запускаем продолжение и завершаемся
             if not dispatch_successor():
