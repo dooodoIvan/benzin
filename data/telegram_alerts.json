@@ -82,7 +82,7 @@
   "last_alert": "2026-10-11T09:00:18.219224+03:00"
  },
  "a9ae0c|92": {
-  "state": "stale"
+  "state": "have"
  },
  "e3a599|92": {
   "state": "term",
@@ -183,7 +183,8 @@
   "state": "unknown"
  },
  "8fcece|92": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-11T14:50:32.130208+03:00"
  },
  "1a9329|95": {
   "state": "term"
@@ -192,7 +193,8 @@
   "state": "unknown"
  },
  "1a9329|92": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-11T14:50:32.130208+03:00"
  },
  "c4a883|92": {
   "state": "term",
