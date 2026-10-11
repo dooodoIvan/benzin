@@ -2382,6 +2382,25 @@ def work_once():
     print(f"{datetime.now(MSK):%d.%m %H:%M} сбор: новых наблюдений {new}, {time.time() - t0:.0f} с", file=sys.stderr, flush=True)
 
 
+NIGHT = {"hour": None}
+
+
+def night_collect_due(now):
+    """Ночью (0:00–7:00) раз в час: считать канал и сохранить в базу — без страницы, оповещений и проверок здоровья."""
+    if NIGHT["hour"] == (now.date(), now.hour):
+        return
+    NIGHT["hour"] = (now.date(), now.hour)
+    try:
+        db = open_db()
+        new = collect(db, 4)
+        if new:
+            save_db(db)
+        save_and_push()
+        print(f"{now:%d.%m %H:%M} ночной сбор: новых наблюдений {new}", file=sys.stderr, flush=True)
+    except Exception as e:
+        print(f"ночной сбор не удался: {e}", file=sys.stderr)
+
+
 def save_on_stop(signum, frame):
     """GitHub при отмене задачи присылает сигнал и даёт несколько секунд — сохраняем несохранённый выбор."""
     if UNPUSHED["since"]:
@@ -2417,6 +2436,7 @@ def cmd_worker(args):
         wake = min(target, start + timedelta(minutes=350))
         print(f"ночное ожидание до {wake:%d.%m %H:%M}", file=sys.stderr, flush=True)
         while datetime.now(MSK) < wake:
+            night_collect_due(datetime.now(MSK))
             try:
                 manual = pending_manual_runs()
                 if manual:
@@ -2465,6 +2485,8 @@ def cmd_worker(args):
                 notify_owner("⚠️ Не удалось запустить следующую смену сервера. Попробует «будильник» GitHub в течение нескольких минут.")
             print("запущено продолжение", file=sys.stderr)
             return
+        if now < ws:
+            night_collect_due(now)  # 5:50–7:00: тот же тихий почасовой сбор
         if slots and now >= slots[0]:  # подошло время по расписанию
             do_now = True
             slots = [s for s in slots if s > now]
