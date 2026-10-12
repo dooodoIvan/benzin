@@ -1169,7 +1169,7 @@ def write_report(db, path=None, sids=None, combos=None):
                 hide = "" if fuel in DEFAULT_FUELS else " nosel"
                 chips.append(f'<span class="chip{hide}" data-fuel="{esc(fuel)}" title="ориентир на {seen:%d.%m %H:%M}">'
                              f'{fuel_name(fuel)} <b>{money(price)}</b>{delta}</span>')
-        price_html = f'<div class="prices"><span class="p-title">💰 Ориентировочная стоимость</span>{"".join(chips)}</div>' if chips else ""
+        price_html = f'<div class="prices"><span class="p-title">Ориентировочная стоимость</span>{"".join(chips)}</div>' if chips else ""
         hist, seen_keys = [], set()
         for seen_at, fuel, avail, kind in db.execute(
                 "SELECT seen_at, fuel, available, kind FROM obs WHERE address = ? AND seen_at >= ? "
@@ -1287,6 +1287,7 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 .st-yes {{ color:var(--have); font-weight:700; }}
 /* цены — пилюли */
 .prices {{ margin:12px 0 0; font-size:13px; color:var(--muted); display:flex; flex-direction:column; gap:6px; align-items:flex-start; }}
+.prices .p-title {{ font-size:15px; font-weight:600; color:var(--text); margin-bottom:2px; }}
 .prices .chip {{ background:var(--chip); color:var(--text2); border-radius:999px; padding:5px 11px; }}
 .prices .chip b {{ color:var(--text); font-weight:700; }} .p-up {{ color:var(--none); font-size:12px; }} .p-down {{ color:var(--have); font-size:12px; }}
 .card > table:not(.tbl) {{ table-layout:fixed; }}
@@ -1338,7 +1339,7 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 Нажмите на график, чтобы увидеть подробности.</div>
 <p class="note nosel" id="fnote">Статистика по вашему набору марок появится при следующем обновлении страницы (до 10 минут); пока показана по АИ-95/98.</p>
 {blocks}
-<p class="foot">💰 «Ориентировочная стоимость» — цена из отчётов водителей (обычно одинакова для всей сети);
+<p class="foot">«Ориентировочная стоимость» — цена из отчётов водителей (обычно одинакова для всей сети);
 ↑ — подорожало, ↓ — подешевело с указанной даты. «Водитель» — отчёт водителя с заправки. «Общая сводка» — подтверждённые данные за последний час.
 «Терминалы оплаты» — топливо продаётся по данным касс, но водители ещё не подтвердили; если рядом по времени есть отчёт водителя, в статистике учитывается он.
 Состояние считается неизменным до следующего отчёта, но не дольше 2 часов; дальше — «нет данных».</p>
