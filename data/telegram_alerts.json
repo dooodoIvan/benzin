@@ -35,10 +35,10 @@
   "last_alert": "2026-10-11T23:30:13.195035+03:00"
  },
  "472e11|95+": {
-  "state": "have"
+  "state": "none"
  },
  "68d21d|95+": {
-  "state": "none"
+  "state": "stale"
  },
  "a9ae0c|95+": {
   "state": "unknown"
@@ -47,7 +47,7 @@
   "state": "unknown"
  },
  "fbe476|95+": {
-  "state": "none"
+  "state": "stale"
  },
  "a9af09|95": {
   "state": "term"
@@ -71,7 +71,7 @@
   "last_alert": "2026-10-11T15:50:24.793099+03:00"
  },
  "68d21d|92": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-12T15:40:20.413227+03:00"
  },
  "7cce85|92": {
@@ -97,7 +97,7 @@
   "state": "term"
  },
  "2876fc|95": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-12T15:50:17.578975+03:00"
  },
  "2876fc|95+": {
@@ -128,7 +128,7 @@
   "state": "unknown"
  },
  "ae46f5|95": {
-  "state": "term"
+  "state": "none"
  },
  "ae46f5|95+": {
   "state": "none"
@@ -201,5 +201,41 @@
  "c4a883|92": {
   "state": "term",
   "last_alert": "2026-10-10T21:10:13.607881+03:00"
+ },
+ "1a9329|95+": {
+  "state": "none"
+ },
+ "2c0db4|98": {
+  "state": "stale"
+ },
+ "2e9181|95": {
+  "state": "term"
+ },
+ "2e9181|95+": {
+  "state": "unknown"
+ },
+ "2e9181|98": {
+  "state": "unknown"
+ },
+ "ae46f5|98": {
+  "state": "unknown"
+ },
+ "ca3966|95+": {
+  "state": "none"
+ },
+ "d8a313|95": {
+  "state": "term"
+ },
+ "d8a313|95+": {
+  "state": "none"
+ },
+ "d8a313|98": {
+  "state": "unknown"
+ },
+ "e3a599|95+": {
+  "state": "unknown"
+ },
+ "e3a599|98": {
+  "state": "unknown"
  }
 }
