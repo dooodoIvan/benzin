@@ -8,7 +8,7 @@
   "state": "unknown"
  },
  "68d21d|95": {
-  "state": "stale",
+  "state": "term",
   "last_alert": "2026-10-12T15:40:20.413227+03:00"
  },
  "68d21d|98": {
@@ -147,7 +147,7 @@
   "state": "stale"
  },
  "864e7d|92": {
-  "state": "stale",
+  "state": "term",
   "last_alert": "2026-10-12T14:40:11.613097+03:00"
  },
  "864e7d|95": {
