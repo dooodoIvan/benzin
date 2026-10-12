@@ -1169,7 +1169,7 @@ def write_report(db, path=None, sids=None, combos=None):
                 hide = "" if fuel in DEFAULT_FUELS else " nosel"
                 chips.append(f'<span class="chip{hide}" data-fuel="{esc(fuel)}" title="ориентир на {seen:%d.%m %H:%M}">'
                              f'{fuel_name(fuel)} <b>{money(price)}</b>{delta}</span>')
-        price_html = f'<p class="prices">💰 Ориентир: {"".join(chips)}</p>' if chips else ""
+        price_html = f'<div class="prices"><span class="p-title">💰 Ориентировочная стоимость</span>{"".join(chips)}</div>' if chips else ""
         hist, seen_keys = [], set()
         for seen_at, fuel, avail, kind in db.execute(
                 "SELECT seen_at, fuel, available, kind FROM obs WHERE address = ? AND seen_at >= ? "
@@ -1286,7 +1286,7 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 .st-term {{ color:var(--term); font-weight:700; cursor:help; }} .st-no {{ color:var(--none); font-weight:700; }}
 .st-yes {{ color:var(--have); font-weight:700; }}
 /* цены — пилюли */
-.prices {{ margin:12px 0 0; font-size:13px; color:var(--muted); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }}
+.prices {{ margin:12px 0 0; font-size:13px; color:var(--muted); display:flex; flex-direction:column; gap:6px; align-items:flex-start; }}
 .prices .chip {{ background:var(--chip); color:var(--text2); border-radius:999px; padding:5px 11px; }}
 .prices .chip b {{ color:var(--text); font-weight:700; }} .p-up {{ color:var(--none); font-size:12px; }} .p-down {{ color:var(--have); font-size:12px; }}
 .card > table:not(.tbl) {{ table-layout:fixed; }}
@@ -1324,7 +1324,7 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 </style></head><body data-updated="{now.isoformat()}"><main>
 <h1>Обновлено <b>{now:%H:%M}</b>, {now:%d.%m.%Y} <span class="ago" id="ago"></span></h1>
 <div class="topbar">
-  <div class="muted">Сводка по <b id="ftitle">{fuels_title(DEFAULT_FUELS)}</b>. Сбор с 7:00 до 24:00 каждые 10 минут. Ночью данные не обновляются.</div>
+  <div class="muted">Сводка по <b id="ftitle">{fuels_title(DEFAULT_FUELS)}</b>. Сбор с 7:00 до 24:00 каждые 10 минут. Ночью — раз в час, только для статистики (страница обновится в 7:00).</div>
   <a class="refresh" id="refresh" href="{RUN_URL}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg> Обновить сейчас</a>
   <div class="muted nosel" id="refresh-bot">Обновить данные — кнопка «🔄 Обновить» в боте.</div>
 </div>
@@ -1338,7 +1338,7 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 Нажмите на график, чтобы увидеть подробности.</div>
 <p class="note nosel" id="fnote">Статистика по вашему набору марок появится при следующем обновлении страницы (до 10 минут); пока показана по АИ-95/98.</p>
 {blocks}
-<p class="foot">💰 «Ориентир» — ориентировочная цена из отчётов водителей (обычно одинакова для всей сети);
+<p class="foot">💰 «Ориентировочная стоимость» — цена из отчётов водителей (обычно одинакова для всей сети);
 ↑ — подорожало, ↓ — подешевело с указанной даты. «Водитель» — отчёт водителя с заправки. «Общая сводка» — подтверждённые данные за последний час.
 «Терминалы оплаты» — топливо продаётся по данным касс, но водители ещё не подтвердили; если рядом по времени есть отчёт водителя, в статистике учитывается он.
 Состояние считается неизменным до следующего отчёта, но не дольше 2 часов; дальше — «нет данных».</p>
