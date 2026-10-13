@@ -87,7 +87,8 @@ def is_petrol(fuels):
 FRESH = timedelta(hours=24)  # старше — считаем «нет свежих данных»
 CONFIRM_FRESH = timedelta(hours=3)  # «есть» старше 3 часов — «давно» (до этого цвет плавно уходит от зелёного к жёлтому)
 ALERT_COOLDOWN = timedelta(hours=1)  # защита от «мигания» есть/нет: по одной заправке не чаще раза в час
-KIND_RU = {"report": "водитель", "summary": "общая сводка", "signal": "терминалы оплаты, не подтверждено"}
+KIND_RU = {"report": "водитель", "summary": "общая сводка", "signal": "терминалы оплаты, не подтверждено",
+           "user": "отметка в боте"}  # user — пользователь бота сам отметил «есть»/«нет» на странице сводки
 
 
 def status_word(avail, kind, seen_at=None, now=None):
@@ -129,7 +130,7 @@ def open_db():
             fuel      TEXT NOT NULL,
             available INTEGER NOT NULL,     -- 1 есть, 0 нет
             status    TEXT NOT NULL,        -- исходная формулировка
-            kind      TEXT NOT NULL,        -- report | summary | signal
+            kind      TEXT NOT NULL,        -- report | summary | signal | user
             queue     TEXT,
             post_id   INTEGER NOT NULL,
             brand     TEXT,                 -- сеть АЗС (Роснефть, Лукойл…), если канал её указал
@@ -486,7 +487,7 @@ def latest_state(db, sids):
             continue
         for seen_at, fuel, avail, status, kind, queue in db.execute(
                 "SELECT seen_at, fuel, available, status, kind, queue FROM obs WHERE address = ? AND seen_at >= ? "
-                "ORDER BY seen_at, CASE kind WHEN 'report' THEN 2 WHEN 'summary' THEN 1 ELSE 0 END",  # при равном времени — водитель
+                "ORDER BY seen_at, CASE kind WHEN 'user' THEN 3 WHEN 'report' THEN 2 WHEN 'summary' THEN 1 ELSE 0 END",  # при равном времени — отметка, водитель
                 (address, since)):
             if fuel in FUEL_CHOICES:
                 latest[sid][fuel] = (datetime.fromisoformat(seen_at), avail, status, queue, kind)
@@ -1098,6 +1099,9 @@ PUMP_ICON = ('<span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" widt
              '<path d="M14 10h2a2 2 0 0 1 2 2v4.5a1.5 1.5 0 0 0 3 0V8.5L18 5.5"/></svg></span>')
 
 # логотипы сетей (значок без надписи) — лежат в logos/, встраиваются в страницу; у остальных сетей — колонка
+EDIT_ICON = ('<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.1" '
+             'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/>'
+             '<path d="M13.5 6.5l4 4"/></svg>')
 LOGOS = {"роснефть": "rosneft.png", "лукойл": "lukoil.png", "газпромнефть": "gpn.png", "газпром": "gpn.png",
          "татнефть": "tatneft.svg", "teboil": "teboil.svg"}
 
@@ -1173,7 +1177,7 @@ def write_report(db, path=None, sids=None, combos=None):
         hist, seen_keys = [], set()
         for seen_at, fuel, avail, kind in db.execute(
                 "SELECT seen_at, fuel, available, kind FROM obs WHERE address = ? AND seen_at >= ? "
-                "ORDER BY seen_at DESC, CASE kind WHEN 'report' THEN 0 WHEN 'summary' THEN 1 ELSE 2 END",
+                "ORDER BY seen_at DESC, CASE kind WHEN 'user' THEN 0 WHEN 'report' THEN 1 WHEN 'summary' THEN 2 ELSE 3 END",
                 (REG[sid]["address"], since)):
             if fuel in FUEL_CHOICES:
                 t = datetime.fromisoformat(seen_at)
@@ -1191,7 +1195,8 @@ def write_report(db, path=None, sids=None, combos=None):
         cards.append(f'<section class="card st{"" if sid in shown else " nosel"}" data-sid="{sid}" '
                      f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}"><div class="head">{brand_icon(REG[sid]["brand"])}'
                      f'<div class="ttl"><h2>{esc(title)}</h2><span class="sub">{esc(short_address(REG[sid]["address"]))}</span></div>'
-                     f'<span class="badge {cls}"{at}>{label}</span></div>{table}{price_html}{hist_html}</section>')
+                     f'<span class="badge {cls}"{at}>{label}</span></div>{table}{price_html}'
+                     f'<button type="button" class="edit-btn">{EDIT_ICON}Внести изменения</button>{hist_html}</section>')
     blocks = "".join(
         f'<div class="fblock{"" if i == 0 else " nosel"}" data-fuels="{esc(",".join(c))}">{stats_section(db, now, sids, shown, list(c))}</div>'
         for i, c in enumerate(combos))
@@ -1317,6 +1322,36 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 .hours td, .hours th {{ text-align:center; white-space:nowrap; }} .hours td:first-child, .hours th:first-child {{ text-align:left; }}
 .tbl td, .tbl th {{ padding:5px 6px; font-size:13px; }}
 .foot {{ margin-top:22px; font-size:13px; color:var(--muted); }}
+/* «Внести изменения»: кнопка в карточке и окно с отметками есть/нет */
+.edit-btn {{ display:inline-flex; align-items:center; gap:6px; margin-top:14px; border:0; cursor:pointer;
+  background:var(--chip); color:var(--text); font:600 14px/1 inherit; font-family:inherit; padding:10px 15px; border-radius:999px; }}
+.edit-btn:active, .pill:active, .accept:active {{ transform:scale(.97); }}
+.modal {{ position:fixed; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; padding:16px;
+  background:rgba(0,0,0,.55); opacity:0; transition:opacity .2s ease; }}
+.modal[hidden] {{ display:none; }} .modal.show {{ opacity:1; }}
+.sheet {{ position:relative; width:100%; max-width:420px; max-height:calc(100vh - 32px); overflow:auto; box-sizing:border-box;
+  background:var(--card); color:var(--text); border-radius:22px; padding:22px 20px 20px; box-shadow:0 24px 60px -20px rgba(0,0,0,.6);
+  transform:translateY(16px) scale(.98); transition:transform .3s cubic-bezier(.25,.8,.3,1); }}
+.modal.show .sheet {{ transform:none; }}
+.sheet h2 {{ font-size:22px; font-weight:600; padding-right:36px; }}
+.sheet .sub {{ display:block; color:var(--muted); font-size:13px; margin-top:2px; }}
+.sheet .x {{ position:absolute; top:14px; right:14px; width:34px; height:34px; border:0; border-radius:50%; cursor:pointer;
+  background:var(--chip); color:var(--text2); font-size:20px; line-height:1; font-family:inherit; }}
+.sheet table {{ margin-top:14px; }}
+.sheet td {{ padding:12px 6px; }} .sheet td.fuel {{ width:28%; }}
+.pills {{ display:flex; gap:10px; }}
+.pill {{ flex:1; max-width:110px; border:1.5px solid var(--text2); background:transparent; color:var(--text); cursor:pointer;
+  font:600 15px/1 inherit; font-family:inherit; padding:9px 0; border-radius:999px; transition:background .15s, border-color .15s, color .15s; }}
+.pill.on.yes {{ background:#22b14c; border-color:#22b14c; color:#fff; }}
+.pill.on.no {{ background:#e5483d; border-color:#e5483d; color:#fff; }}
+.sheet .note {{ margin:12px 0 0; }}
+.accept {{ margin-top:18px; border:0; cursor:pointer; background:#22b14c; color:#fff; font:700 16px/1 inherit; font-family:inherit;
+  padding:13px 30px; border-radius:999px; box-shadow:0 8px 20px -10px #22b14c; }}
+.accept:disabled {{ opacity:.35; cursor:default; box-shadow:none; transform:none; }}
+@media (max-width:560px) {{ .modal {{ align-items:flex-end; padding:0; }}
+  .sheet {{ max-width:none; border-radius:22px 22px 0 0; max-height:92vh; padding-bottom:max(20px, env(safe-area-inset-bottom));
+    transform:translateY(40px); }} }}
+@media (prefers-reduced-motion: reduce) {{ .modal, .sheet {{ transition:none; }} }}
 #tip {{ position:fixed; pointer-events:none; background:var(--raise); color:var(--text); border-radius:12px;
   padding:8px 11px; font-size:13px; box-shadow:0 10px 30px -10px rgba(0,0,0,.35); display:none; max-width:280px; z-index:10; white-space:pre-line; }}
 @media (max-width:560px) {{ .card > table:not(.tbl) th:nth-child(5), .card > table:not(.tbl) td:nth-child(5) {{ display:none; }}
@@ -1340,10 +1375,17 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 <p class="note nosel" id="fnote">Статистика по вашему набору марок появится при следующем обновлении страницы (до 10 минут); пока показана по АИ-95/98.</p>
 {blocks}
 <p class="foot">«Ориентировочная стоимость» — цена из отчётов водителей (обычно одинакова для всей сети);
-↑ — подорожало, ↓ — подешевело с указанной даты. «Водитель» — отчёт водителя с заправки. «Общая сводка» — подтверждённые данные за последний час.
+↑ — подорожало, ↓ — подешевело с указанной даты. «Водитель» — отчёт водителя с заправки. «Отметка в боте» — пользователь бота отметил наличие кнопкой «Внести изменения». «Общая сводка» — подтверждённые данные за последний час.
 «Терминалы оплаты» — топливо продаётся по данным касс, но водители ещё не подтвердили; если рядом по времени есть отчёт водителя, в статистике учитывается он.
 Состояние считается неизменным до следующего отчёта, но не дольше 2 часов; дальше — «нет данных».</p>
 </main><div id="tip" role="tooltip"></div>
+<div class="modal" id="edit" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="edit-title">
+  <button type="button" class="x" id="edit-close" aria-label="Закрыть">×</button>
+  <h2 id="edit-title">Внести изменения</h2><span class="sub" id="edit-place"></span>
+  <table><tr><th>Марка</th><th></th></tr><tbody id="edit-rows"></tbody></table>
+  <p class="note" id="edit-note"></p>
+  <button type="button" class="accept" id="edit-accept" disabled>принять</button>
+</div></div>
 <script>
 // свои заправки (?s=код,код,…) и марки (?f=92,95,…): показываем только их
 const params = new URLSearchParams(location.search);
@@ -1481,6 +1523,54 @@ document.querySelectorAll('details').forEach(d => {{
     }}
   }});
 }});
+// «Внести изменения»: отметить «есть»/«нет» по маркам; «Принять» отправляет отметку боту (Telegram.WebApp.sendData).
+// Отправка работает, когда сводка открыта большой кнопкой «⛽ Сводка» под полем ввода (тогда initData пустой).
+const NAMES = {json.dumps(FUEL_RU, ensure_ascii=False)};
+const editBox = document.getElementById('edit'), editRows = document.getElementById('edit-rows');
+const editAccept = document.getElementById('edit-accept'), editNote = document.getElementById('edit-note');
+const canSend = inTg && !Telegram.WebApp.initData && typeof Telegram.WebApp.sendData === 'function';
+let editSid = null, editVals = {{}};
+function openEdit(card) {{
+  editSid = card.dataset.sid; editVals = {{}};
+  document.getElementById('edit-place').textContent = card.querySelector('h2').textContent + ' · ' + card.querySelector('.ttl .sub').textContent;
+  editRows.innerHTML = '';
+  wanted.forEach(f => {{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="fuel">${{NAMES[f] || f}}</td><td><div class="pills">
+      <button type="button" class="pill yes" data-f="${{f}}" data-v="1" aria-pressed="false">есть</button>
+      <button type="button" class="pill no" data-f="${{f}}" data-v="0" aria-pressed="false">нет</button></div></td>`;
+    editRows.appendChild(tr);
+  }});
+  editNote.textContent = canSend ? 'Отметьте только то, что видели сами. Остальные марки останутся без изменений.'
+    : inTg ? 'Отправить отметку можно, если открыть сводку большой кнопкой «⛽\u00a0Сводка» под полем ввода в боте.'
+    : 'Отправить отметку можно только из Telegram: откройте сводку кнопкой «⛽\u00a0Сводка» в боте.';
+  editAccept.disabled = true;
+  editBox.hidden = false; requestAnimationFrame(() => editBox.classList.add('show'));
+  if (inTg) try {{ Telegram.WebApp.BackButton.show(); }} catch (e) {{}}
+}}
+function closeEdit() {{
+  editBox.classList.remove('show');
+  setTimeout(() => {{ editBox.hidden = true; }}, reduceMotion ? 0 : 200);
+  if (inTg) try {{ Telegram.WebApp.BackButton.hide(); }} catch (e) {{}}
+}}
+document.querySelectorAll('.edit-btn').forEach(b => b.addEventListener('click', () => openEdit(b.closest('section.card'))));
+editRows.addEventListener('click', e => {{
+  const p = e.target.closest('.pill'); if (!p) return;
+  const f = p.dataset.f, v = +p.dataset.v;
+  if (editVals[f] === v) delete editVals[f]; else editVals[f] = v;  // повторное нажатие снимает отметку
+  editRows.querySelectorAll(`.pill[data-f="${{f}}"]`).forEach(x => {{
+    const on = editVals[f] === +x.dataset.v; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); }});
+  editAccept.disabled = !canSend || !Object.keys(editVals).length;
+  if (inTg) try {{ Telegram.WebApp.HapticFeedback.selectionChanged(); }} catch (e) {{}}
+}});
+editAccept.addEventListener('click', () => {{
+  if (!canSend || !Object.keys(editVals).length) return;
+  Telegram.WebApp.sendData(JSON.stringify({{a: 'edit', s: editSid, v: editVals}}));  // Telegram закроет сводку, бот ответит
+}});
+document.getElementById('edit-close').addEventListener('click', closeEdit);
+editBox.addEventListener('click', e => {{ if (e.target === editBox) closeEdit(); }});
+document.addEventListener('keydown', e => {{ if (e.key === 'Escape' && !editBox.hidden) closeEdit(); }});
+if (inTg) try {{ Telegram.WebApp.BackButton.onClick(closeEdit); }} catch (e) {{}}
 const tipEl = document.getElementById('tip');
 function show(e) {{ const t = e.target.closest('[data-tip]'); if (!t) return;
   tipEl.textContent = t.getAttribute('data-tip'); tipEl.style.display = 'block'; move(e); }}
@@ -1941,12 +2031,57 @@ def handle_fuels_cb(token, cb, subs):
     return changed
 
 
+# --- отметки «есть»/«нет» со страницы сводки ---
+#
+# Кнопка «Внести изменения» в карточке заправки открывает окно; «Принять» отправляет боту данные
+# через Telegram.WebApp.sendData (работает, когда сводка открыта большой кнопкой «⛽ Сводка» под полем ввода).
+# Отметка записывается в data/obs.csv как наблюдение вида "user" (без имени и ID — хранилище открытое).
+
+USER_EDITS = {"pending": False}  # есть новые отметки — сразу пересобрать сводку и разослать оповещения
+
+
+def handle_web_app_data(token, msg, subs):
+    cid, user = str(msg["chat"]["id"]), msg.get("from", {})
+    owner = owner_id()
+    if cid != owner and cid not in subs["subscribers"]:
+        say(token, cid, INTRO_TEXT, REQUEST_KEYBOARD)
+        return False
+    try:
+        data = json.loads(msg["web_app_data"].get("data") or "{}")
+    except ValueError:
+        data = {}
+    sid = data.get("s")
+    values = {f: v for f, v in (data.get("v") or {}).items() if f in FUEL_CHOICES and v in (0, 1)}
+    if data.get("a") != "edit" or sid not in REG or not values:
+        say(token, cid, "Не получилось принять отметку — попробуйте ещё раз из сводки.")
+        return False
+    now = datetime.fromtimestamp(msg.get("date") or time.time(), MSK)  # время отправки (ночью бот отвечает только утром)
+    address, brand = REG[sid]["address"], REG[sid]["brand"]
+    db = open_db()
+    db.executemany("INSERT OR IGNORE INTO obs VALUES (?,?,?,?,?,?,?,?,?)",
+                   [(now.isoformat(), address, f, v, "есть" if v else "нет", "user", None, 0, brand)
+                    for f, v in values.items()])
+    save_db(db)
+    USER_EDITS["pending"] = True
+    marks = ", ".join(f"{fuel_name(f)} — {'есть' if v else 'нет'}" for f, v in
+                      sorted(values.items(), key=lambda kv: FUEL_CHOICES.index(kv[0])))
+    place = html.escape(REG[sid]["label"])
+    say(token, cid, f"✅ Спасибо! Отметка принята в {now:%H:%M}:\n<b>{place}</b>\n{marks}\n\n"
+                    "Сводка обновится примерно через минуту.",
+        json.loads(page_button(now, selection(subs, cid), fuel_selection(subs, cid), cid)))
+    if cid != owner:
+        say(token, owner, f"✏️ Отметка от {html.escape(user_name(user))}:\n<b>{place}</b>\n{marks}")
+    return False
+
+
 # --- сообщения и кнопки бота ---
 
 def handle_message(token, msg, subs):
     chat, user = msg.get("chat", {}), msg.get("from", {})
     if chat.get("type") != "private":
         return False
+    if msg.get("web_app_data"):
+        return handle_web_app_data(token, msg, subs)
     cid, text = str(chat["id"]), (msg.get("text") or "").strip()
     owner = owner_id()
     text = {BTN_STATIONS: "/stations", BTN_FUELS: "/fuels", BTN_REFRESH: "/refresh", BTN_SUBS: "/list",
@@ -2353,6 +2488,7 @@ def dispatch_successor():
 def work_once():
     """Один сбор: канал → data/obs.csv → страница → оповещения в Telegram → сохранить в хранилище."""
     t0 = time.time()
+    USER_EDITS["pending"] = False
     db = open_db()
     try:
         new = collect(db, 4)
@@ -2494,7 +2630,7 @@ def cmd_worker(args):
         manual = []
         if time.time() - last_queue_check >= 20:
             manual, last_queue_check = pending_manual_runs(), time.time()
-        if do_now or manual or REFRESH["waiting"]:
+        if do_now or manual or REFRESH["waiting"] or USER_EDITS["pending"]:
             work_once()
             for run_id in set(manual + pending_manual_runs()):  # ручные запросы выполнены — убираем из очереди
                 try:
