@@ -184,8 +184,8 @@
   "state": "unknown"
  },
  "8fcece|92": {
-  "state": "term",
-  "last_alert": "2026-10-11T14:50:32.130208+03:00"
+  "state": "have",
+  "last_alert": "2026-10-13T07:30:14.114040+03:00"
  },
  "1a9329|95": {
   "state": "have",
