@@ -634,24 +634,37 @@ def tg_chat_id(token):
 
 
 def alert_text(db, items, now, wanted):
-    """items: [(sid, [марка…])] — где только что появилось нужное топливо."""
+    """items: [(sid, [марка…])] — где только что появилось нужное топливо.
+    По каждой заправке: название, затем в цитате — марки с ценами, время и источник, очередь, сколько обычно держится.
+    Если время/источник/очередь у марок одинаковые — пишем один раз, иначе — в строке каждой марки."""
     fuels_all = {f for _, fs in items for f in fs}
-    lines = ["<b>⛽ Появился бензин</b>" if not ("ДТ" in fuels_all and len(fuels_all) == 1) else "<b>⛽ Появилось дизельное топливо</b>"]
+    lines = ["⛽ <b>Появился бензин</b>" if not ("ДТ" in fuels_all and len(fuels_all) == 1) else "⛽ <b>Появилось дизельное топливо</b>"]
     latest = latest_state(db, [sid for sid, _ in items])
     prices = latest_prices(db, [sid for sid, _ in items])
     for sid, fs in items:
-        parts = []
-        for fuel in FUEL_CHOICES:
-            if fuel in fs and fuel in latest[sid]:
-                seen_at, _, _, queue, kind = latest[sid][fuel]
-                price = prices.get(sid, {}).get(fuel)
-                parts.append(f"{fuel_name(fuel)} есть ({seen_at:%H:%M}, {KIND_RU[kind]}"
-                             + (f", очередь {html.escape(queue)}" if queue else "") + ")"
-                             + (f", ~{money(price[0])}" if price else ""))
-        lines.append(f"\n✅ <b>{html.escape(REG[sid]['name'])}</b>\n   " + "; ".join(parts))
+        rows = [(fuel, *latest[sid][fuel]) for fuel in FUEL_CHOICES if fuel in fs and fuel in latest[sid]]
+        if not rows:
+            continue
+        same_when = len({(r[1], r[5]) for r in rows}) == 1
+        same_queue = len({r[4] for r in rows}) == 1
+        body = []
+        for fuel, seen_at, _, _, queue, kind in rows:
+            price = prices.get(sid, {}).get(fuel)
+            line = f"🟢 <b>{fuel_name(fuel)}</b>" + (f" · {money(price[0])}" if price else "")
+            if not same_when:
+                line += f" · {seen_at:%H:%M}, {KIND_RU[kind]}"
+            if not same_queue and queue:
+                line += f" · 🚗 {html.escape(queue)}"
+            body.append(line)
+        _, seen_at, _, _, queue, kind = rows[0]
+        if same_when:
+            body.append(f"🕒 {seen_at:%H:%M}, {KIND_RU[kind]}")
+        if same_queue and queue:
+            body.append(f"🚗 Очередь: {html.escape(queue)}")
         st = station_stats(db, sid, now, wanted)
         if st and median_duration(st["durations"]):
-            lines.append(f"   📊 обычно держится около {median_duration(st['durations'])}")
+            body.append(f"📊 Обычно держится около {median_duration(st['durations'])}")
+        lines.append(f"\n📍 <b>{html.escape(REG[sid]['name'])}</b>\n<blockquote>" + "\n".join(body) + "</blockquote>")
     return "\n".join(lines)
 
 
@@ -1325,8 +1338,10 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 .tbl td, .tbl th {{ padding:5px 6px; font-size:13px; }}
 .foot {{ margin-top:22px; font-size:13px; color:var(--muted); }}
 /* «Внести изменения»: кнопка в карточке и окно с отметками есть/нет */
-.edit-btn {{ display:inline-flex; align-items:center; gap:6px; margin-top:14px; border:0; cursor:pointer;
-  background:var(--chip); color:var(--text); font-family:inherit; font-weight:600; font-size:14px; line-height:1; padding:10px 15px; border-radius:999px; }}
+.edit-btn {{ display:inline-flex; align-items:center; gap:6px; margin-top:14px; border:0; cursor:pointer; box-sizing:border-box; height:36px;
+  background:var(--chip); color:var(--text); font-family:inherit; font-weight:600; font-size:14px; line-height:1; padding:0 15px 2px; border-radius:999px; }}
+.edit-btn svg {{ position:relative; top:1px; }}
+/* у Manrope строчные буквы сидят ниже геометрического центра строки — приподнимаем текст отступом снизу */
 .edit-btn:active, .pill:active, .accept:active {{ transform:scale(.97); }}
 .modal {{ position:fixed; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; padding:16px;
   background:rgba(0,0,0,.55); opacity:0; transition:opacity .2s ease; }}
@@ -1338,17 +1353,20 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 .sheet h2 {{ font-size:22px; font-weight:600; padding-right:36px; }}
 .sheet .sub {{ display:block; color:var(--muted); font-size:13px; margin-top:2px; }}
 .sheet .x {{ position:absolute; top:14px; right:14px; width:34px; height:34px; border:0; border-radius:50%; cursor:pointer;
-  background:var(--chip); color:var(--text2); font-size:20px; line-height:1; font-family:inherit; }}
+  background:var(--chip); color:var(--text2); font-size:20px; line-height:1; font-family:inherit;
+  display:flex; align-items:center; justify-content:center; padding:0 0 1px; }}
 .sheet table {{ margin-top:14px; }}
 .sheet td {{ padding:12px 6px; }} .sheet td.fuel {{ width:28%; }}
 .pills {{ display:flex; gap:10px; }}
 .pill {{ flex:1; max-width:110px; border:1.5px solid var(--text2); background:transparent; color:var(--text); cursor:pointer;
-  font-family:inherit; font-weight:600; font-size:15px; line-height:1; padding:9px 0; border-radius:999px; transition:background .15s, border-color .15s, color .15s; }}
+  display:flex; align-items:center; justify-content:center; box-sizing:border-box; height:38px; padding:0 0 3px;
+  font-family:inherit; font-weight:600; font-size:15px; line-height:1; border-radius:999px; transition:background .15s, border-color .15s, color .15s; }}
 .pill.on.yes {{ background:#22b14c; border-color:#22b14c; color:#fff; }}
 .pill.on.no {{ background:#e5483d; border-color:#e5483d; color:#fff; }}
 .sheet .note {{ margin:12px 0 0; }}
-.accept {{ display:block; width:100%; max-width:300px; margin:22px auto 0; border:0; cursor:pointer; background:#22b14c; color:#fff;
-  font-family:inherit; font-weight:700; font-size:19px; line-height:1; padding:18px 30px; border-radius:999px; box-shadow:0 10px 24px -10px #22b14c; }}
+.accept {{ display:flex; align-items:center; justify-content:center; box-sizing:border-box; width:100%; max-width:300px; height:56px;
+  margin:22px auto 0; border:0; cursor:pointer; background:#22b14c; color:#fff;
+  font-family:inherit; font-weight:700; font-size:19px; line-height:1; padding:0 30px 2px; border-radius:999px; box-shadow:0 10px 24px -10px #22b14c; }}
 .accept:disabled {{ opacity:.35; cursor:default; box-shadow:none; transform:none; }}
 @media (max-width:560px) {{ .modal {{ align-items:flex-end; padding:0; }}
   .sheet {{ max-width:none; border-radius:22px 22px 0 0; max-height:92vh; padding-bottom:max(20px, env(safe-area-inset-bottom));
