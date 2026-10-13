@@ -1523,25 +1523,30 @@ document.querySelectorAll('details').forEach(d => {{
     }}
   }});
 }});
-// «Внести изменения»: отметить «есть»/«нет» по маркам; «Принять» отправляет отметку боту (Telegram.WebApp.sendData).
+// «Внести изменения»: сначала выбрано текущее состояние («есть»/«нет»; «давно», «терминал» и «нет информации» — без выбора).
+// «Принять» отправляет боту только изменённые марки (Telegram.WebApp.sendData).
 // Отправка работает, когда сводка открыта большой кнопкой «⛽ Сводка» под полем ввода (тогда initData пустой).
 const NAMES = {json.dumps(FUEL_RU, ensure_ascii=False)};
 const editBox = document.getElementById('edit'), editRows = document.getElementById('edit-rows');
 const editAccept = document.getElementById('edit-accept'), editNote = document.getElementById('edit-note');
 const canSend = inTg && !Telegram.WebApp.initData && typeof Telegram.WebApp.sendData === 'function';
-let editSid = null, editVals = {{}};
+let editSid = null, editVals = {{}}, editInit = {{}};
+const editChanges = () => Object.fromEntries(Object.entries(editVals).filter(([f, v]) => editInit[f] !== v));
 function openEdit(card) {{
-  editSid = card.dataset.sid; editVals = {{}};
+  const st = JSON.parse(card.dataset.st || '{{}}');
+  editSid = card.dataset.sid; editInit = {{}};
+  wanted.forEach(f => {{ const c = (st[f] || [])[0]; if (c === 'have') editInit[f] = 1; else if (c === 'none') editInit[f] = 0; }});
+  editVals = {{...editInit}};
+  const pill = (f, v, cls, text) => `<button type="button" class="pill ${{cls}}${{editVals[f] === v ? ' on' : ''}}" data-f="${{f}}" data-v="${{v}}" aria-pressed="${{editVals[f] === v}}">${{text}}</button>`;
   document.getElementById('edit-place').textContent = card.querySelector('h2').textContent + ' · ' + card.querySelector('.ttl .sub').textContent;
   editRows.innerHTML = '';
   wanted.forEach(f => {{
     const tr = document.createElement('tr');
     tr.innerHTML = `<td class="fuel">${{NAMES[f] || f}}</td><td><div class="pills">
-      <button type="button" class="pill yes" data-f="${{f}}" data-v="1" aria-pressed="false">есть</button>
-      <button type="button" class="pill no" data-f="${{f}}" data-v="0" aria-pressed="false">нет</button></div></td>`;
+      ${{pill(f, 1, 'yes', 'есть')}}${{pill(f, 0, 'no', 'нет')}}</div></td>`;
     editRows.appendChild(tr);
   }});
-  editNote.textContent = canSend ? 'Отметьте только то, что видели сами. Остальные марки останутся без изменений.'
+  editNote.textContent = canSend ? 'Выбрано текущее состояние. Поменяйте то, что видели сами, и нажмите «принять».'
     : inTg ? 'Отправить отметку можно, если открыть сводку большой кнопкой «⛽\u00a0Сводка» под полем ввода в боте.'
     : 'Отправить отметку можно только из Telegram: откройте сводку кнопкой «⛽\u00a0Сводка» в боте.';
   editAccept.disabled = true;
@@ -1557,15 +1562,16 @@ document.querySelectorAll('.edit-btn').forEach(b => b.addEventListener('click', 
 editRows.addEventListener('click', e => {{
   const p = e.target.closest('.pill'); if (!p) return;
   const f = p.dataset.f, v = +p.dataset.v;
-  if (editVals[f] === v) delete editVals[f]; else editVals[f] = v;  // повторное нажатие снимает отметку
+  editVals[f] = v;
   editRows.querySelectorAll(`.pill[data-f="${{f}}"]`).forEach(x => {{
     const on = editVals[f] === +x.dataset.v; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); }});
-  editAccept.disabled = !canSend || !Object.keys(editVals).length;
+  editAccept.disabled = !canSend || !Object.keys(editChanges()).length;  // «принять» — когда что-то изменили
   if (inTg) try {{ Telegram.WebApp.HapticFeedback.selectionChanged(); }} catch (e) {{}}
 }});
 editAccept.addEventListener('click', () => {{
-  if (!canSend || !Object.keys(editVals).length) return;
-  Telegram.WebApp.sendData(JSON.stringify({{a: 'edit', s: editSid, v: editVals}}));  // Telegram закроет сводку, бот ответит
+  const v = editChanges();
+  if (!canSend || !Object.keys(v).length) return;
+  Telegram.WebApp.sendData(JSON.stringify({{a: 'edit', s: editSid, v}}));  // Telegram закроет сводку, бот ответит
 }});
 document.getElementById('edit-close').addEventListener('click', closeEdit);
 editBox.addEventListener('click', e => {{ if (e.target === editBox) closeEdit(); }});
