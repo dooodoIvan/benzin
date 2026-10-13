@@ -1326,7 +1326,7 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 .foot {{ margin-top:22px; font-size:13px; color:var(--muted); }}
 /* «Внести изменения»: кнопка в карточке и окно с отметками есть/нет */
 .edit-btn {{ display:inline-flex; align-items:center; gap:6px; margin-top:14px; border:0; cursor:pointer;
-  background:var(--chip); color:var(--text); font:600 14px/1 inherit; font-family:inherit; padding:10px 15px; border-radius:999px; }}
+  background:var(--chip); color:var(--text); font-family:inherit; font-weight:600; font-size:14px; line-height:1; padding:10px 15px; border-radius:999px; }}
 .edit-btn:active, .pill:active, .accept:active {{ transform:scale(.97); }}
 .modal {{ position:fixed; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; padding:16px;
   background:rgba(0,0,0,.55); opacity:0; transition:opacity .2s ease; }}
@@ -1343,12 +1343,12 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
 .sheet td {{ padding:12px 6px; }} .sheet td.fuel {{ width:28%; }}
 .pills {{ display:flex; gap:10px; }}
 .pill {{ flex:1; max-width:110px; border:1.5px solid var(--text2); background:transparent; color:var(--text); cursor:pointer;
-  font:600 15px/1 inherit; font-family:inherit; padding:9px 0; border-radius:999px; transition:background .15s, border-color .15s, color .15s; }}
+  font-family:inherit; font-weight:600; font-size:15px; line-height:1; padding:9px 0; border-radius:999px; transition:background .15s, border-color .15s, color .15s; }}
 .pill.on.yes {{ background:#22b14c; border-color:#22b14c; color:#fff; }}
 .pill.on.no {{ background:#e5483d; border-color:#e5483d; color:#fff; }}
 .sheet .note {{ margin:12px 0 0; }}
-.accept {{ margin-top:18px; border:0; cursor:pointer; background:#22b14c; color:#fff; font:700 16px/1 inherit; font-family:inherit;
-  padding:13px 30px; border-radius:999px; box-shadow:0 8px 20px -10px #22b14c; }}
+.accept {{ display:block; width:100%; max-width:300px; margin:22px auto 0; border:0; cursor:pointer; background:#22b14c; color:#fff;
+  font-family:inherit; font-weight:700; font-size:19px; line-height:1; padding:18px 30px; border-radius:999px; box-shadow:0 10px 24px -10px #22b14c; }}
 .accept:disabled {{ opacity:.35; cursor:default; box-shadow:none; transform:none; }}
 @media (max-width:560px) {{ .modal {{ align-items:flex-end; padding:0; }}
   .sheet {{ max-width:none; border-radius:22px 22px 0 0; max-height:92vh; padding-bottom:max(20px, env(safe-area-inset-bottom));
@@ -1386,7 +1386,7 @@ details > .dc > * {{ contain:content; will-change:opacity, transform; }}  /* с�
   <h2 id="edit-title">Внести изменения</h2><span class="sub" id="edit-place"></span>
   <table><tr><th>Марка</th><th></th></tr><tbody id="edit-rows"></tbody></table>
   <p class="note" id="edit-note"></p>
-  <button type="button" class="accept" id="edit-accept" disabled>принять</button>
+  <button type="button" class="accept" id="edit-accept" disabled>Принять</button>
 </div></div>
 <script>
 // свои заправки (?s=код,код,…) и марки (?f=92,95,…): показываем только их
@@ -1550,7 +1550,7 @@ function openEdit(card) {{
       ${{pill(f, 1, 'yes', 'есть')}}${{pill(f, 0, 'no', 'нет')}}</div></td>`;
     editRows.appendChild(tr);
   }});
-  editNote.textContent = canSend ? 'Выбрано текущее состояние. Проверьте все марки и нажмите «принять» — отметка обновится на текущее время.'
+  editNote.textContent = canSend ? 'Выбрано текущее состояние. Проверьте все марки и нажмите «Принять» — отметка обновится на текущее время.'
     : inTg ? 'Отправить отметку можно, если открыть сводку большой кнопкой «⛽\u00a0Сводка» под полем ввода в боте.'
     : 'Отправить отметку можно только из Telegram: откройте сводку кнопкой «⛽\u00a0Сводка» в боте.';
   editAccept.disabled = !canSend || !Object.keys(editVals).length;
