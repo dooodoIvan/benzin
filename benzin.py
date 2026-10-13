@@ -1566,7 +1566,7 @@ document.querySelectorAll('.edit-btn').forEach(b => b.addEventListener('click', 
 editRows.addEventListener('click', e => {{
   const p = e.target.closest('.pill'); if (!p) return;
   const f = p.dataset.f, v = +p.dataset.v;
-  editVals[f] = v;
+  if (editVals[f] === v) delete editVals[f]; else editVals[f] = v;  // повторное нажатие снимает выбор
   editRows.querySelectorAll(`.pill[data-f="${{f}}"]`).forEach(x => {{
     const on = editVals[f] === +x.dataset.v; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); }});
   editAccept.disabled = !canSend || !Object.keys(editVals).length;
