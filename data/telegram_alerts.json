@@ -175,7 +175,7 @@
   "last_alert": "2026-10-10T19:40:16.307115+03:00"
  },
  "ca3966|95": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-13T12:30:24.840271+03:00"
  },
  "ca3966|98": {
@@ -227,7 +227,7 @@
   "state": "unknown"
  },
  "ca3966|95+": {
-  "state": "none"
+  "state": "unknown"
  },
  "d8a313|95": {
   "state": "term"
