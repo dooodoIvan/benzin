@@ -204,10 +204,10 @@
   "last_alert": "2026-10-10T21:10:13.607881+03:00"
  },
  "1a9329|95+": {
-  "state": "none"
+  "state": "unknown"
  },
  "2c0db4|98": {
-  "state": "stale"
+  "state": "unknown"
  },
  "2e9181|95": {
   "state": "have",
