@@ -1191,9 +1191,11 @@ def write_report(db, path=None, sids=None, combos=None):
         hist_html = (f'<details class="hist"><summary>Все отчёты за сутки (<span class="n">0</span>)</summary>'
                      f'<div class="dc"><ul>{"".join(hist[:60])}</ul></div></details>' if hist else "")
         title = REG[sid]["brand"] or "АЗС"
+        known = {f for (f,) in db.execute("SELECT DISTINCT fuel FROM obs WHERE address = ?", (REG[sid]["address"],))}
+        sold = [f for f in FUEL_CHOICES if f in known]  # все марки этой заправки — для окна «Внести изменения»
         at = f' data-at="{when.timestamp():.0f}"' if cls == "have" else ""
         cards.append(f'<section class="card st{"" if sid in shown else " nosel"}" data-sid="{sid}" '
-                     f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}"><div class="head">{brand_icon(REG[sid]["brand"])}'
+                     f'data-st="{esc(json.dumps(per_fuel, ensure_ascii=False))}" data-all="{esc(",".join(sold))}"><div class="head">{brand_icon(REG[sid]["brand"])}'
                      f'<div class="ttl"><h2>{esc(title)}</h2><span class="sub">{esc(short_address(REG[sid]["address"]))}</span></div>'
                      f'<span class="badge {cls}"{at}>{label}</span></div>{table}{price_html}'
                      f'<button type="button" class="edit-btn">{EDIT_ICON}Внести изменения</button>{hist_html}</section>')
@@ -1523,33 +1525,35 @@ document.querySelectorAll('details').forEach(d => {{
     }}
   }});
 }});
-// «Внести изменения»: сначала выбрано текущее состояние («есть»/«нет»; «давно», «терминал» и «нет информации» — без выбора).
-// «Принять» отправляет боту только изменённые марки (Telegram.WebApp.sendData).
+// «Внести изменения»: все марки заправки (о которых были отчёты) и марки пользователя; сначала выбрано текущее состояние
+// («есть»/«нет»; «давно», «терминал» и «нет информации» — без выбора). «принять» отправляет боту все выбранные марки —
+// это и исправление, и подтверждение, что сейчас есть / всё ещё нет (Telegram.WebApp.sendData).
 // Отправка работает, когда сводка открыта большой кнопкой «⛽ Сводка» под полем ввода (тогда initData пустой).
 const NAMES = {json.dumps(FUEL_RU, ensure_ascii=False)};
 const editBox = document.getElementById('edit'), editRows = document.getElementById('edit-rows');
 const editAccept = document.getElementById('edit-accept'), editNote = document.getElementById('edit-note');
 const canSend = inTg && !Telegram.WebApp.initData && typeof Telegram.WebApp.sendData === 'function';
 let editSid = null, editVals = {{}}, editInit = {{}};
-const editChanges = () => Object.fromEntries(Object.entries(editVals).filter(([f, v]) => editInit[f] !== v));
 function openEdit(card) {{
   const st = JSON.parse(card.dataset.st || '{{}}');
   editSid = card.dataset.sid; editInit = {{}};
-  wanted.forEach(f => {{ const c = (st[f] || [])[0]; if (c === 'have') editInit[f] = 1; else if (c === 'none') editInit[f] = 0; }});
+  const sold = (card.dataset.all || '').split(',').filter(Boolean);
+  const list = ALL_FUELS.filter(f => sold.includes(f) || wanted.includes(f));
+  list.forEach(f => {{ const c = (st[f] || [])[0]; if (c === 'have') editInit[f] = 1; else if (c === 'none') editInit[f] = 0; }});
   editVals = {{...editInit}};
   const pill = (f, v, cls, text) => `<button type="button" class="pill ${{cls}}${{editVals[f] === v ? ' on' : ''}}" data-f="${{f}}" data-v="${{v}}" aria-pressed="${{editVals[f] === v}}">${{text}}</button>`;
   document.getElementById('edit-place').textContent = card.querySelector('h2').textContent + ' · ' + card.querySelector('.ttl .sub').textContent;
   editRows.innerHTML = '';
-  wanted.forEach(f => {{
+  list.forEach(f => {{
     const tr = document.createElement('tr');
     tr.innerHTML = `<td class="fuel">${{NAMES[f] || f}}</td><td><div class="pills">
       ${{pill(f, 1, 'yes', 'есть')}}${{pill(f, 0, 'no', 'нет')}}</div></td>`;
     editRows.appendChild(tr);
   }});
-  editNote.textContent = canSend ? 'Выбрано текущее состояние. Поменяйте то, что видели сами, и нажмите «принять».'
+  editNote.textContent = canSend ? 'Выбрано текущее состояние. Проверьте все марки и нажмите «принять» — отметка обновится на текущее время.'
     : inTg ? 'Отправить отметку можно, если открыть сводку большой кнопкой «⛽\u00a0Сводка» под полем ввода в боте.'
     : 'Отправить отметку можно только из Telegram: откройте сводку кнопкой «⛽\u00a0Сводка» в боте.';
-  editAccept.disabled = true;
+  editAccept.disabled = !canSend || !Object.keys(editVals).length;
   editBox.hidden = false; requestAnimationFrame(() => editBox.classList.add('show'));
   if (inTg) try {{ Telegram.WebApp.BackButton.show(); }} catch (e) {{}}
 }}
@@ -1565,11 +1569,11 @@ editRows.addEventListener('click', e => {{
   editVals[f] = v;
   editRows.querySelectorAll(`.pill[data-f="${{f}}"]`).forEach(x => {{
     const on = editVals[f] === +x.dataset.v; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); }});
-  editAccept.disabled = !canSend || !Object.keys(editChanges()).length;  // «принять» — когда что-то изменили
+  editAccept.disabled = !canSend || !Object.keys(editVals).length;
   if (inTg) try {{ Telegram.WebApp.HapticFeedback.selectionChanged(); }} catch (e) {{}}
 }});
 editAccept.addEventListener('click', () => {{
-  const v = editChanges();
+  const v = editVals;
   if (!canSend || !Object.keys(v).length) return;
   Telegram.WebApp.sendData(JSON.stringify({{a: 'edit', s: editSid, v}}));  // Telegram закроет сводку, бот ответит
 }});
