@@ -128,7 +128,8 @@
   "state": "unknown"
  },
  "ae46f5|95": {
-  "state": "term"
+  "state": "have",
+  "last_alert": "2026-10-13T08:00:24.538868+03:00"
  },
  "ae46f5|95+": {
   "state": "none"
