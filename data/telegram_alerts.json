@@ -87,11 +87,11 @@
   "state": "term"
  },
  "e3a599|92": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-13T09:30:22.106297+03:00"
  },
  "e3a599|95": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-13T09:30:22.106297+03:00"
  },
  "fbe476|92": {
