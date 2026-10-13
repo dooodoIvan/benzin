@@ -86,12 +86,12 @@
   "state": "term"
  },
  "e3a599|92": {
-  "state": "term",
-  "last_alert": "2026-10-11T10:00:14.555814+03:00"
+  "state": "have",
+  "last_alert": "2026-10-13T09:30:22.106297+03:00"
  },
  "e3a599|95": {
-  "state": "term",
-  "last_alert": "2026-10-11T10:00:14.555814+03:00"
+  "state": "have",
+  "last_alert": "2026-10-13T09:30:22.106297+03:00"
  },
  "fbe476|92": {
   "state": "term"
@@ -235,7 +235,8 @@
   "state": "unknown"
  },
  "e3a599|95+": {
-  "state": "unknown"
+  "state": "have",
+  "last_alert": "2026-10-13T09:30:22.106297+03:00"
  },
  "e3a599|98": {
   "state": "unknown"
