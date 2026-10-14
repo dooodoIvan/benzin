@@ -216,8 +216,8 @@
   "last_alert": "2026-10-13T18:10:33.497875+03:00"
  },
  "2e9181|95": {
-  "state": "term",
-  "last_alert": "2026-10-14T07:00:17.680091+03:00"
+  "state": "have",
+  "last_alert": "2026-10-14T10:00:26.887040+03:00"
  },
  "2e9181|95+": {
   "state": "unknown"
@@ -246,5 +246,23 @@
  },
  "e3a599|98": {
   "state": "unknown"
+ },
+ "1a9329|ДТ": {
+  "state": "have"
+ },
+ "472e11|ДТ": {
+  "state": "have"
+ },
+ "68d21d|ДТ": {
+  "state": "stale"
+ },
+ "a9ae0c|ДТ": {
+  "state": "unknown"
+ },
+ "c4a883|ДТ": {
+  "state": "unknown"
+ },
+ "fbe476|ДТ": {
+  "state": "stale"
  }
 }
