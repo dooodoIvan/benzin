@@ -237,11 +237,11 @@
   "state": "none"
  },
  "d8a313|95": {
-  "state": "have",
+  "state": "none",
   "last_alert": "2026-10-15T15:40:31.695504+03:00"
  },
  "d8a313|95+": {
-  "state": "unknown"
+  "state": "none"
  },
  "d8a313|98": {
   "state": "unknown"
