@@ -16,11 +16,11 @@
   "last_alert": "2026-10-13T14:40:13.664248+03:00"
  },
  "a9ae0c|95": {
-  "state": "have",
+  "state": "none",
   "last_alert": "2026-10-15T20:00:35.858747+03:00"
  },
  "a9ae0c|98": {
-  "state": "unknown"
+  "state": "none"
  },
  "c4a883|95": {
   "state": "term",
