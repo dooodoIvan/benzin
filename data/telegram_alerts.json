@@ -31,7 +31,7 @@
   "state": "unknown"
  },
  "fbe476|95": {
-  "state": "term",
+  "state": "none",
   "last_alert": "2026-10-15T13:00:28.104607+03:00"
  },
  "fbe476|98": {
@@ -53,7 +53,7 @@
   "state": "unknown"
  },
  "fbe476|95+": {
-  "state": "unknown"
+  "state": "none"
  },
  "a9af09|95": {
   "state": "term"
@@ -101,7 +101,7 @@
   "last_alert": "2026-10-17T10:30:36.195589+03:00"
  },
  "fbe476|92": {
-  "state": "have",
+  "state": "none",
   "last_alert": "2026-10-17T19:00:37.948172+03:00"
  },
  "2876fc|95": {
@@ -198,14 +198,14 @@
   "last_alert": "2026-10-17T15:40:37.498391+03:00"
  },
  "1a9329|95": {
-  "state": "none",
+  "state": "term",
   "last_alert": "2026-10-17T12:00:42.297728+03:00"
  },
  "1a9329|98": {
   "state": "unknown"
  },
  "1a9329|92": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-17T17:10:26.684560+03:00"
  },
  "c4a883|92": {
