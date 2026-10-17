@@ -1,7 +1,7 @@
 {
  "_v": 3,
  "472e11|95": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-17T08:30:28.399937+03:00"
  },
  "472e11|98": {
@@ -65,7 +65,7 @@
   "state": "unknown"
  },
  "472e11|92": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-17T08:30:28.399937+03:00"
  },
  "5c1960|92": {
@@ -187,7 +187,7 @@
   "state": "unknown"
  },
  "d0dbe7|95": {
-  "state": "have",
+  "state": "term",
   "last_alert": "2026-10-17T07:20:41.529524+03:00"
  },
  "d0dbe7|98": {
@@ -274,6 +274,6 @@
   "state": "stale"
  },
  "d0dbe7|92": {
-  "state": "have"
+  "state": "term"
  }
 }
