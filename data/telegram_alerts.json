@@ -31,7 +31,7 @@
   "state": "unknown"
  },
  "fbe476|95": {
-  "state": "term",
+  "state": "none",
   "last_alert": "2026-10-15T13:00:28.104607+03:00"
  },
  "fbe476|98": {
@@ -53,7 +53,8 @@
   "state": "unknown"
  },
  "fbe476|95+": {
-  "state": "none"
+  "state": "have",
+  "last_alert": "2026-10-18T17:00:46.107396+03:00"
  },
  "a9af09|95": {
   "state": "term"
@@ -101,7 +102,7 @@
   "last_alert": "2026-10-18T14:20:39.554958+03:00"
  },
  "fbe476|92": {
-  "state": "term",
+  "state": "none",
   "last_alert": "2026-10-18T12:00:45.531805+03:00"
  },
  "2876fc|95": {
@@ -157,7 +158,7 @@
   "state": "stale"
  },
  "864e7d|92": {
-  "state": "term",
+  "state": "none",
   "last_alert": "2026-10-17T13:20:41.959603+03:00"
  },
  "864e7d|95": {
