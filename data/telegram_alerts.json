@@ -250,7 +250,7 @@
   "state": "unknown"
  },
  "e3a599|95+": {
-  "state": "have",
+  "state": "stale",
   "last_alert": "2026-10-19T12:00:41.463659+03:00"
  },
  "e3a599|98": {
