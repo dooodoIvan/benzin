@@ -195,8 +195,8 @@
   "state": "unknown"
  },
  "8fcece|92": {
-  "state": "term",
-  "last_alert": "2026-10-19T09:00:47.289115+03:00"
+  "state": "have",
+  "last_alert": "2026-10-19T17:00:57.109777+03:00"
  },
  "1a9329|95": {
   "state": "term",
