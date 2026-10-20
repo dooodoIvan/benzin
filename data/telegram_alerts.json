@@ -240,8 +240,8 @@
   "state": "none"
  },
  "d8a313|95": {
-  "state": "none",
-  "last_alert": "2026-10-19T16:41:00.904964+03:00"
+  "state": "have",
+  "last_alert": "2026-10-20T16:51:02.332112+03:00"
  },
  "d8a313|95+": {
   "state": "unknown"
