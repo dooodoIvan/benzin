@@ -159,11 +159,11 @@
   "state": "stale"
  },
  "864e7d|92": {
-  "state": "none",
+  "state": "term",
   "last_alert": "2026-10-23T22:21:01.343056+03:00"
  },
  "864e7d|95": {
-  "state": "none",
+  "state": "term",
   "last_alert": "2026-10-23T22:21:01.343056+03:00"
  },
  "211c1b|92": {
