@@ -138,7 +138,7 @@
   "state": "unknown"
  },
  "ae46f5|95": {
-  "state": "have",
+  "state": "stale",
   "last_alert": "2026-11-08T07:21:08.541751+03:00"
  },
  "ae46f5|95+": {
@@ -159,11 +159,11 @@
   "state": "stale"
  },
  "864e7d|92": {
-  "state": "stale",
+  "state": "have",
   "last_alert": "2026-11-07T18:21:05.499314+03:00"
  },
  "864e7d|95": {
-  "state": "stale",
+  "state": "have",
   "last_alert": "2026-11-07T18:21:05.499314+03:00"
  },
  "211c1b|92": {
