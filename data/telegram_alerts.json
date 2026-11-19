@@ -138,12 +138,12 @@
   "state": "unknown"
  },
  "ae46f5|95": {
-  "state": "unknown",
-  "last_alert": "2026-11-12T11:10:57.169074+03:00"
+  "state": "have",
+  "last_alert": "2026-11-19T12:30:09.823648+03:00"
  },
  "ae46f5|95+": {
-  "state": "unknown",
-  "last_alert": "2026-11-11T16:40:53.595626+03:00"
+  "state": "have",
+  "last_alert": "2026-11-19T12:30:09.823648+03:00"
  },
  "da2b7e|95": {
   "state": "term"
