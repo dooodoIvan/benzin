@@ -138,8 +138,8 @@
   "state": "unknown"
  },
  "ae46f5|95": {
-  "state": "unknown",
-  "last_alert": "2026-11-19T12:30:09.823648+03:00"
+  "state": "have",
+  "last_alert": "2026-11-20T15:00:18.644430+03:00"
  },
  "ae46f5|95+": {
   "state": "unknown",
