@@ -32,8 +32,8 @@
   "state": "unknown"
  },
  "fbe476|95": {
-  "state": "unknown",
-  "last_alert": "2026-10-29T20:11:13.162146+03:00"
+  "state": "have",
+  "last_alert": "2026-11-21T12:40:25.546815+03:00"
  },
  "fbe476|98": {
   "state": "unknown",
