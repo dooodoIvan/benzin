@@ -159,7 +159,7 @@
   "state": "stale"
  },
  "864e7d|92": {
-  "state": "have",
+  "state": "stale",
   "last_alert": "2026-11-24T10:20:26.613629+03:00"
  },
  "864e7d|95": {
