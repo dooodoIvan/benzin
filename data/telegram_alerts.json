@@ -83,11 +83,11 @@
   "last_alert": "2026-11-25T15:50:20.947201+03:00"
  },
  "7cce85|92": {
-  "state": "stale",
+  "state": "unknown",
   "last_alert": "2026-11-26T08:30:19.912695+03:00"
  },
  "7cce85|95": {
-  "state": "stale",
+  "state": "unknown",
   "last_alert": "2026-11-26T08:30:19.912695+03:00"
  },
  "a9ae0c|92": {
