@@ -190,8 +190,8 @@
   "last_alert": "2026-11-12T11:51:04.406863+03:00"
  },
  "d0dbe7|95": {
-  "state": "unknown",
-  "last_alert": "2026-11-20T12:30:21.308538+03:00"
+  "state": "have",
+  "last_alert": "2026-11-28T15:10:19.145682+03:00"
  },
  "d0dbe7|98": {
   "state": "unknown",
@@ -284,8 +284,8 @@
   "state": "stale"
  },
  "d0dbe7|92": {
-  "state": "unknown",
-  "last_alert": "2026-11-20T12:30:21.308538+03:00"
+  "state": "have",
+  "last_alert": "2026-11-28T15:10:19.145682+03:00"
  },
  "927b44|92": {
   "state": "unknown"
